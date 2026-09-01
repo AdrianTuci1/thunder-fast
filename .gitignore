@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Secrets / credentials — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs & runtime artifacts
+*.log
+run.log
+
+# Large generated/binary model artifacts (downloads, checkpoints, quantized weights)
+*.pt
+*.bin
+*.onnx
+*.gguf
+*.safetensors
+
+# Modal / local cloud transfer artifacts
+.runpod_ckpt/

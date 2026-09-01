@@ -1,0 +1,92 @@
+# train_config.yaml — configurarea adaptării AR -> difuzie continuă
+# Valori scalate pentru un buget de ~24h pe GPU Modal/RunPod, salvare în R2.
+
+model:
+  # Modelul AR de bază. ADR 0002: sub pragul 1B, multilingual => Qwen3-0.6B
+  # (încape pe 2–4 GPU în 24h și vede mai mulți tokeni).
+  base: "Qwen/Qwen3-0.6B"
+  use_gqa: true
+
+diffusion:
+  # Longimea secvenței pentru un pas de denoising (generare paralelă).
+  seq_len: 256
+  # Pași de difuzie: 24 (standardul LLaDA — tavan de calitate mai bun). Ține training/inference
+  # pe aceeași valoare, ca programul de zgomot să fie consistent. Reduci doar dacă vrei viteză
+  # mai mare la inferență (16 = mai rapid, 24 = calitate).
+  train_steps: 24
+  infer_steps: 24
+  # Program de zgomot: "linear" sau "cosine".
+  schedule: "linear"
+  # Zgomot maxim/minim de diffuzie (β-limite pentru variance-preserving).
+  beta_start: 0.0001
+  beta_end: 0.02
+  # Parametru de mascare (0..1) — fracțiunea de poziții absorbite pe lângă Gaussian.
+  mask_ratio: 0.25
+  # Predictia modelului: "epsilon" (zgomot), "x0" (curat) sau "v" (velocity).
+  # Folosim "epsilon": predicția x0 duce la posterior collapse (modelul învață să emită
+  # media embeddings ~0, MSE ~ varianța lui x0, gradienți ~0). Epsilon evită soluția trivială.
+  prediction: "epsilon"
+
+training:
+  # Buget total de tokeni.
+  #   Scenariul de față: rulare completă ~4h pe UN SINGUR H100 => ~2B tokeni.
+  #   Pentru buget mai mare (20–40B pe 2–4 GPU), suprascrie total_tokens / GPUs.
+  total_tokens: 2_000_000_000
+  # Batch global = batch_size_seq * seq_len * grad_accum = 32*256*8 = 65.536 tokeni/step.
+  batch_size_seq: 32          # secvențe per micro-batch (lungime 256)
+  grad_accum: 8
+  # Workers paralelize streaming+tokenizare; fără ele GPU-ul e subalimentat.
+  # NOTĂ: num_workers=0 e cel mai robust împotriva deadlock-ului cunoscut dintre
+  # datasets streaming (IterableDataset) + DataLoader>0. Streaming e oricum I/O-bound.
+  num_workers: 0
+  gradient_checkpointing: true
+  learning_rate: 2.0e-4       # conservator, să păstrăm inițializarea AR
+  lr_schedule: "cosine"       # cosine la ~10% din peak
+  warmup_steps: 2000
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  bf16: true
+  # Parametrii NOI (time_mlp, mask_embedding) primesc LR mai mare, ca să convergă repede.
+  new_params_lr_mult: 5.0
+  # TODO(optional): EMA (decay ~0.999) ajută stabilitatea în antrenare de difuzie; neimplementat încă.
+
+  # Oprire elegantă după acest timp real (wall-clock); la final se salvează un checkpoint.
+  # Pentru rularea "detached" de 4h: 4.0. 0 = fără limită de timp (folosește max_steps).
+  max_time_hours: 4.0
+
+  # Checkpointing pe timp: salvează la fiecare ~2h și ȚINE DOAR ULTIMELE 3 cele mai recente.
+  # (La final se salvează oricum un checkpoint; _rotate șterge cele mai vechi > keep_last.)
+  ckpt_every_hours: 2.0
+  keep_last: 3
+
+data:
+  # Amestec multilingual + română intensivă (vezi research notes §6).
+  # Fiecare sursă: tip (mono|parallel), nume HF/path, pondere (0..1).
+  sources:
+    # NOTĂ: OSCAR-2301 (ro) este gated pe HF (necesită acceptarea termenilor cu tokenul),
+    # deci folosim C4 pe configurile publice `en`/`ro` (fără gating). OSCAR-2301:ro rămâne
+    # alternativă dacă accepți termenii — vezi infra/modal_train.py și research notes §6.
+    - name: "allenai/c4:en"                   # engleză generală
+      type: mono
+      weight: 0.60
+    - name: "allenai/c4:ro"                   # română monolinguală (public, din C4 multilingual)
+      type: mono
+      weight: 0.30
+    - name: "Helsinki-NLP/opus-100:en-ro"     # paralel EN–RO
+      type: parallel
+      weight: 0.10
+  packing: true                # împachetăm secvențe la lungimea 256
+  bos_ratio: 0.045             # fracțiune de documente care primesc BOS (pentru început natural)
+
+eval:
+  # Seturi de evaluare română + perplexity pe mono.
+  datasets:
+    - "liro"                   # subset / e.g. RoNLU
+    - "flores200-en-ro"        # traducere EN–RO
+    - "wmt19-en-ro"            # traducere EN–RO
+  run_every_steps: 1000
+  max_samples: 512
+
+storage:
+  # Cheile R2 sunt citite din env (vezi infra/r2.py).
+  r2_prefix: "thunder-fast/checkpoints"

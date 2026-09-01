@@ -1,0 +1,20 @@
+# RunPod container for thunder-fast diffusion adaptation training.
+#
+# Build + push (from any machine with docker):
+#   docker build -f infra/Dockerfile.runpod -t <registry>/thunder-fast-train:latest .
+#   docker push <registry>/thunder-fast-train:latest
+#
+# Then in RunPod, create a Pod/Job with the image, set these env vars, and run:
+#   R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY, R2_SECRET_KEY
+# The container entrypoint runs training and uploads checkpoints to R2.
+
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+
+COPY . /workspace
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Default: run the same training entrypoint as Modal. Override via pod command if needed.
+CMD ["python", "src/train/train.py", "--config", "config/train_config.yaml"]
