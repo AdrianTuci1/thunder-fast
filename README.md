@@ -40,3 +40,23 @@ about 1.5 s at 24 steps, i.e. roughly **180 tok/s**; the 512-token block-wise mo
 **215 tok/s**. For comparison, the same weights decoded autoregressively (greedy, causal attention)
 reach about **43 tok/s** — but that harness has no KV-cache and recomputes the whole sequence at each
 step, so a production AR decoder with KV-cache is substantially faster per stream.
+
+## Related work
+
+This project adapts a pretrained **autoregressive** model (Qwen3-0.6B) into a masked-diffusion model
+rather than training a diffusion LM from scratch. This mirrors the finding behind **DiffuLLaMA**:
+training a diffusion language model from scratch at scale remains challenging, whereas starting from a
+pretrained AR backbone lets the model learn language first and then be adapted to generate through
+diffusion. In our experiments a model trained purely on the diffusion objective from pretraining did
+not converge to coherent output, while adapting a pretrained AR backbone is what made the diffusion
+generator work.
+
+- [DiffuLLaMA](https://github.com/HKUNLP/DiffuLLaMA) — *Scaling Diffusion Language Models via
+  Adaptation from Autoregressive Models* (ICLR 2025). Converts GPT-2/LLaMA checkpoints into diffusion
+  models by continual pre-training, using far less compute than training a diffusion LM from scratch.
+- [Diffusion-LM](https://github.com/XiangLi1999/Diffusion-LM) — *Diffusion-LM Improves Controllable
+  Text Generation* (NeurIPS 2022). The original non-autoregressive diffusion text model, with
+  conditional/classifier-guided generation.
+- [LLaDA](https://github.com/ML-GSAI/LLaDA) — *Large Language Diffusion with mAsking*. Discrete masked
+  diffusion LMs trained at scale, with a masked-diffusion pretraining and decoding schedule related to
+  the one used here. (Note: LLaDA is trained from scratch rather than adapted from an AR model.)
