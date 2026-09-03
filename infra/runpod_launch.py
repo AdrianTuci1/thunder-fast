@@ -24,6 +24,7 @@ def main():
     ap.add_argument("--gpu", default="A100")
     ap.add_argument("--gpu-count", type=int, default=4)
     ap.add_argument("--max-steps", type=int, default=None)
+    ap.add_argument("--upload-r2", action="store_true", help="push checkpoints to R2 during training")
     ap.add_argument("--timeout", type=int, default=86400)
     args = ap.parse_args()
 
@@ -39,6 +40,8 @@ def main():
     cmd = ["python", "src/train/train.py", "--config", "config/train_config.yaml"]
     if args.max_steps is not None:
         cmd += ["--max-steps", str(args.max_steps)]
+    if args.upload_r2:
+        cmd += ["--upload-r2"]
 
     job = runpod.create_job(
         image=args.image,

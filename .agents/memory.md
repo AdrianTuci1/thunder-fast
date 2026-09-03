@@ -99,7 +99,10 @@ repetă până la curățare
 - **Lungimea secvenței:** **N = 256 tokeni** (confirmat). Atenția bidirecțională se calculează pe
   matricea întreagă [256 × hidden]; la n=256 atenția completă O(n²) e ieftină (256×256 = 65.536),
   deci **nu e nevoie de KV-cache** și nu avem problemă de memorie/latency la atenție.
-- **Runtime (ADR 0003):** binar custom peste kernel-urile ggml; atenție bidirecțională + buclă 24 pași.
+- **Runtime (ADR 0012):** motor propriu în `runtime/` peste **ggml** (atenție bidirecțională + buclă
+  de denoising). Înlocuiește direcția simplă din ADR 0003; kernel-urile SIMD custom rămân atribut
+  opțional de tuning, nu contribuția principală. Nucleul de difuzie e **agnostic de backend**
+  (`forward(ids) -> logits`), deci funcționează și pe torch/MLX.
 
 ---
 

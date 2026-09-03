@@ -31,19 +31,24 @@
       `/vol/checkpoints/v2-masked-x0/step_75.pt`.
 - [ ] (de decalat la discrete LLaDA) dacă run-ul lung continuu nu dă text coerent.
 
-## Faza 3 — Cuantizare & runtime
-- [x] ~~Integrare în llama.cpp (fork) SAU binar propriu~~ — **DECIS (ADR 0003):** binar custom
-      peste kernel-urile ggml.
-- [ ] Cuantizare Q4 (Q4_K_M / Q4_0) + activări Q8_0.
-- [ ] Conversie checkpoint → GGUF + motor de difuzie (atenție bidirecțională + buclă 24 pași).
+## Faza 3 — Runtime ggml (ADR 0012) & cuantizare
+- [x] **Decizie runtime:** motor propriu în `runtime/` peste ggml (atenție bidir + buclă de denoising)
+      — **DECIS (ADR 0012)**; înlocuiește simpla direcție din ADR 0003.
+- [x] Nucleu de difuzie (`runtime/src/diffusion/`) — implementat + testat (funcțional, local).
+- [x] Schelet runtime: CLI + server HTTP OpenAI-compatibil, tokenizer, engine ggml, converter, upload R2.
+- [ ] Build prin **workflow GH Actions dispatch** (`gh workflow run build-runtime`) → R2; compilare
+      validată pe **Modal** (materializare graf ggml + mapare tensori + atenție bidir).
+- [ ] Cuantizare Q4 (Q4_K_M / Q4_0) + activări Q8_0 (pe greutățile GGUF).
 - [ ] Verificare că inferența difuzie rulează corect cu weight-uri cuantizate.
+- [ ] Tokenizer byte-level exact (render GPT-2 + pre-tokenizare regex) + test pe vocabularul Qwen3.
 
-## Faza 4 — Kernel-uri SIMD (contribuția principală; adaptare la pattern-ul nostru)
-- [ ] **Baseline:** rulează corect cu kernel-urile ggml stock (referință corectitudine + viteză de start).
+## Faza 4 — Kernel-uri SIMD (DEZACTIVAT/opțional, vezi ADR 0012)
+Nu mai sunt contribuția principală: ggml oferă deja kernel-urile (CPU SIMD / CUDA / Metal / Vulkan).
+Devreme doar **tuning de atenție non-cauzală + GEMM** la shape 256 tokeni, dacă e nevoie de viteză
+suplimentară pe CPU:
+- [ ] **Baseline:** rulează corect cu kernel-urile ggml stock.
 - [ ] **Adaptare atenție:** kernel de **atenție non-cauzală** (fără mască/KV-cache).
 - [ ] **Adaptare GEMM:** tunning la batch de 256 tokeni ([256 × hidden] × weights).
-- [ ] **Maximizare eficiență:** x86 AVX2 -> AVX-512 -> AVX-512 VNNI -> AMX; ARM NEON -> I8MM/DotProd -> SVE; AMX Apple.
-- [ ] Dispecerizare runtime (CPUID/features).
 - [ ] Bench: tokens/sec pe 256 tokeni, pe Apple Silicon + VPS AMD/Intel.
 
 ## Faza 5 — Optimizare & scalare

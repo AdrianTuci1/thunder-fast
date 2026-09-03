@@ -7,6 +7,9 @@ whole 256-token window in parallel over 24 diffusion steps, using bidirectional 
 The model is published at **staticlabs/thunder-dlm-0.6b** and runs on Modal/RunPod images, so there is
 nothing to install locally.
 
+Complete documentation, including architecture, training, the ggml runtime, and the
+infrastructure, is in [`docs/index.md`](docs/index.md).
+
 ## Autoregressive vs diffusion
 
 An autoregressive model writes text one token at a time. At step *t* it sees only the prefix `x[0..t-1]`

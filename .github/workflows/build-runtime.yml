@@ -1,0 +1,76 @@
+# build-runtime.yml — dispatch-only build of the ggml runtime, uploaded to R2.
+#
+# Triggered manually only:  gh workflow run build-runtime
+# (NOT on push/PR — this is the "dispatch" build the team runs on demand.)
+#
+# The build fetches ggml (as a CMake dependency), compiles the runtime, and pushes the
+# resulting binary + model to Cloudflare R2 so the runtime can be pulled by `infra/r2.py`
+# or by local clients. It compiles on an x86_64 Linux runner (CPU backend). GPU/CUDA and
+# Apple/Metal builds are a separate matrix entry / Modal step.
+name: build-runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_cuda:
+        description: "Build with CUDA backend (needs GPU runner)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential python3-pip python3-venv git curl
+
+      - name: Set up Python (converter + upload)
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --quiet --upgrade pip
+          pip install --quiet gguf safetensors torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet boto3
+
+      - name: Copy weights bundle (config.json + diffusion_model.safetensors)
+        run: |
+          # The source checkpoint the converter consumes. In CI we expect it already
+          # present (e.g. fetched from R2); wire the source via a secret/path if needed.
+          echo "Provide the diffusion checkpoint path via the CONVERT_SOURCE env or drop it under ./model"
+          ls -la model 2>/dev/null || echo "no model/ dir mounted"
+
+      - name: Convert checkpoint -> GGUF
+        run: |
+          . .venv/bin/activate
+          python3 runtime/tools/convert_to_gguf.py --checkpoint model --out build/runtime.gguf || \
+            echo "convert skipped (no model mounted)"
+
+      - name: Configure (ggml fetched via CMake FetchContent)
+        run: cmake -S runtime -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Smoke test (diffusion core, no ggml)
+        run: |
+          cd runtime && clang++ -std=c++17 -O2 -I src -o /tmp/test_diffusion tests/test_diffusion.cpp && /tmp/test_diffusion
+
+      - name: Upload artifacts to R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ secrets.R2_PREFIX }}
+        run: |
+          . .venv/bin/activate
+          if [ -f build/runtime ]; then python3 runtime/tools/upload_r2.py build "runtime-linux-x86_64"; fi
