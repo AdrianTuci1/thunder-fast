@@ -1,130 +1,174 @@
 # thunder-fast
 
-Model de limbaj bazat pe **difuzie mascată discretă** (non-autoregresiv): adaptăm un LLM
-autoregresiv existent la un **Masked Diffusion Model (MDM)**. Modelul țintă este **Qwen3-0.6B**.
-Generăm **256 de tokeni în paralel** prin **24 de pași de difuzie**, cu **atenție bidirecțională**
-și un token discret `[MASK]`. Ieșirile lungi (până la **2048 tokeni**) se produc **pe blocuri** de 256.
+A non-autoregressive **discrete masked diffusion (MDM)** language model: we adapt an existing
+autoregressive LLM into a **Masked Diffusion Model**. The target model is **Qwen3-0.6B**. We generate
+**256 tokens in parallel** over **24 diffusion steps**, with **bidirectional attention** and a discrete
+`[MASK]` token. Long outputs (up to **2048 tokens**) are produced **block-wise** in 256-token windows.
 
-> Stare: motorul de antrenare + inferență funcționează (mascare discretă, block-wise); runtime-ul
-> CPU SIMD este încă în plan (ADR 0003). Inferența curentă este de referință PyTorch.
-> Memoria proiectului: [`.agents/`](.agents/).
+> Status: the training + inference engine works (discrete masking, block-wise); the CPU SIMD runtime
+> is still planned (ADR 0003). Current inference is reference PyTorch.
+> Project memory: [`.agents/`](.agents/).
 
-## Scopul (ce facem și de ce)
+## What it does
 
-Construim un model care **generează întreaga secvență simultan**, nu token cu token:
+We build a model that generates **the whole sequence at once**, not token by token:
 
-1. Pornim de la un checkpoint **autoregresiv** antrenat (Qwen3-0.6B) și îl **adaptăm la difuzie**
-   fără a-l antrena de la zero.
-2. **Atenție bidirecțională** — la fiecare pas modelul vede întregul context, deci **infilling
-   natural** și reconstrucție din context complet.
-3. **Un token discret `[MASK]`** este "zgomotul": modelul reconstruiește tokenii mascați cu
-   **cross-entropy** (descoperire progresivă la generare).
-4. Diferențiatorul proiectului: **rulare rapidă pe CPU** (Apple Silicon, laptop, VPS x86/ARM)
-   printr-un runtime custom peste kernel-uri SIMD cu cuantizare Q4 (ADR 0003).
+1. Start from a pretrained **autoregressive** checkpoint (Qwen3-0.6B) and **adapt it to diffusion**
+   without training it from scratch.
+2. **Bidirectional attention** — at every step the model sees the full context, so it does natural
+   **infilling** and reconstruction from complete context.
+3. A discrete **`[MASK]`** token is the "noise": the model reconstructs masked tokens with
+   **cross-entropy** (progressive unmasking at generation time).
+4. The differentiator: **fast CPU inference** (Apple Silicon, laptops, x86/ARM VPS) via a custom
+   runtime over SIMD kernels with Q4 quantization (ADR 0003).
 
-Detaliile tehnice ale adaptării (atenție bidir, token de mascare, obiectiv, unmask progresiv,
-generare pe blocuri) sunt documentate în [`docs/porting-to-diffusion.md`](docs/porting-to-diffusion.md).
+The technical details of the adaptation (bidirectional attention, mask token, objective, progressive
+unmask, block-wise generation) are documented in
+[`docs/porting-to-diffusion.md`](docs/porting-to-diffusion.md).
 
-## Cum îl folosim
+## How to use it
 
-Modelul publicat este **[`staticlabs/thunder-dlm-0.6b`](https://huggingface.co/staticlabs/thunder-dlm-0.6b)**
-(Qwen3-0.6B adaptat la difuzie mascată discretă). Totul rulează pe imagini Modal/RunPod — nu instalezi
-nimic local, credențialele sunt doar în env.
+The published model is [`staticlabs/thunder-dlm-0.6b`](https://huggingface.co/staticlabs/thunder-dlm-0.6b)
+(Qwen3-0.6B adapted to discrete masked diffusion). Everything runs on Modal/RunPod images — you install
+nothing locally and credentials live only in env vars.
 
-1. **Descarcă modelul** în volumul Modal:
+1. **Download the model** into the Modal volume:
    ```bash
    TF_MODEL=staticlabs/thunder-dlm-0.6b modal run infra/modal_download_open.py
    ```
-2. **Generează** cu motorul nostru (block-wise, 24 de pași):
+2. **Generate** with our engine (block-wise, 24 steps):
    ```bash
-   TF_PROMPT="Scrie un quicksort in python." modal run infra/modal_infer_open.py
+   TF_PROMPT="Write a quick sort algorithm in python." modal run infra/modal_infer_open.py
    ```
-   - `TF_MODE=single` = o singură fereastră mare (implicit `block` = pe blocuri).
-   - `TF_STEPS=24` pași de difuzie; `TF_GPU=A10G` etc. pentru GPU (implicit CPU).
-3. **Antrenează / fine-tunează** — `modal run infra/modal_train.py -- --config config/train_config.yaml`
-   (checkpoint-uri în `/vol/checkpoints`).
-4. **Evaluează** — `python eval/eval.py --ckpt <path>`.
+   - `TF_MODE=single` = one large window (default `block` = block-wise).
+   - `TF_STEPS=24` diffusion steps; `TF_GPU=A10G` etc. for GPU (default CPU).
+3. **Train / fine-tune** — `modal run infra/modal_train.py -- --config config/train_config.yaml`
+   (checkpoints land in `/vol/checkpoints`).
+4. **Evaluate** — `python eval/eval.py --ckpt <path>`.
 
-Detaliile variabilelor, modurilor de generare și vitezele sunt în secțiunea
-[Cum rulezi (cloud)](#cum-rulezi-cloud).
+Full variable and mode details in [How to run (cloud)](#how-to-run-cloud).
 
-## Eficiența
+### Input → output
 
-| Dimensiune | Autoregresiv (AR) | Difuzie (noi) |
+Generated by the reference PyTorch engine at **24 steps on an A10G** (270 tokens in ~1.5 s, ~176 tok/s):
+
+```text
+Prompt: Write a Python function that checks if a given string is a palindrome.
+
+Generated:
+ A palindrome is a word, phrase, number, or other sequence of characters that reads
+ the same backward or forward, disregarding spaces, punctuation, and capital.
+"""
+
+class Solution:
+    def isPalindrome(self, s: str) = bool:
+        if not s:
+            return True
+        s = "".join([e for e in s if e.isalnum()).lower()
+        i, j = 0 = 0, len(s) - 1
+        while i < j:
+            if s[i] == s[j]:
+                i += 1
+                j -= 1
+            else:
+                return False
+        return True
+
+"""
+
+# Write a is to check if given string is a palindrome (alindrome)
+def is_palindrome(s str) -> bool:
+    s = s.lower()
+    # spaces all return whitespace
+    s = "".join [e for e in s for e.isalnum()).lower()
+
+def pallindrome (def s str()). bool:
+    if not s:
+        return True
+    i, j = 0 = 0, len(s) - 1
+    while i = i:
+ j = j-1
+        if][i] != s[j]:
+            return False
+    return True
+```
+
+The model recognises the task and produces a plausible `isPalindrome` / `is_palindrome` implementation;
+the tail shows the usual artifacts of a 24-step generation (and, on long blocks, of a context beyond the
+training window).
+
+## Efficiency
+
+| Dimension | Autoregressive (AR) | Diffusion (ours) |
 |---|---|---|
-| Generare | 1 token / pas secvențial (n pași) | **256 tokeni / pas** (pași independenți de lungimea ferestrei) |
-| Cost pe fereastră | O(n) forward-uri, KV-cache, memory-bound | **O(steps)** forward-uri peste fereastra întreagă, **fără KV-cache** |
-| Atenție | cauzală, cu cache | **bidirecțională** O(n²), la n=256 = 65k (ieftină) |
-| Ieșiri lungi (2048) | 2048 pași | **8 blocuri × 24 pași** = 192 forward-uri (context crește) |
+| Generation | 1 token / sequential step (n steps) | **256 tokens / step** (steps independent of window length) |
+| Cost per window | O(n) forwards, KV-cache, memory-bound | **O(steps)** forwards over the whole window, **no KV-cache** |
+| Attention | causal, with cache | **bidirectional** O(n²), at n=256 = 65k (cheap) |
+| Long outputs (2048) | 2048 steps | **8 blocks × 24 steps** = 192 forwards (context grows) |
 
-Puncte-cheie:
+Key points:
 
-- **Generare paralelă**: într-o fereastră de 256, costul crește cu **numărul de pași** (24), nu cu
-  lungimea. Din punctul de vedere al runtime-ului, fiecare pas este un **GEMM batched** [256 × D] —
-  profil de **compute/bandwidth**, nu memory-bound ca GEMV-ul din AR. Asta se potrivește bine cu
-  SIMD + cuantizare Q4 pe CPU.
-- **Fără KV-cache**: atenția completă la 256 este ieftină (256×256), deci nu avem memoria/costul
-  cache-ului de la AR.
-- **Block-wise**: pentru 2048, concatenăm rezultatele a 8 ferestre de 256, fiecare cu contextul
-  anterior ca prefix (contextul crește). Oprire la EOS dacă vrem.
-- **Nivel de calitate vs pași**: la 24 de pași obținem ieșiri coerente; mai mulți pași cresc treptat
-  calitatea, la cost proporțional.
+- **Parallel generation**: within a 256-token window, cost scales with **step count** (24), not length.
+  From the runtime's viewpoint each step is a **batched GEMM** [256 × D] — a **compute/bandwidth**
+  profile, not the memory-bound GEMV of AR. That suits SIMD + Q4 quantization on CPU.
+- **No KV-cache**: full attention at 256 is cheap (256×256), so we avoid the AR cache's memory/cost.
+- **Block-wise**: for 2048 we concatenate 8 windows of 256, each with the previous context as prefix
+  (the context grows). EOS stopping is available.
+- **Quality vs steps**: at 24 steps we get coherent output; more steps improve quality at proportional cost.
 
-Vitezele sunt de referință **PyTorch** (nu ținta SIMD): la 24 de pași ≈ 215 tok/s pe blocuri
-(A10G). Runtime-ul SIMD este încă de construit (ADR 0003).
+Speeds are **reference PyTorch** (not the SIMD target): at 24 steps ≈ 215 tok/s block-wise on an A10G.
+The SIMD runtime is still to be built (ADR 0003).
 
-## Posibile utilizări
+## Use cases
 
-- **Generare de cod** — completare de funcții/algoritmi (ex. quicksort, palindrom).
-- **Infilling de cod (FIM)** — completare în mijloc, posibilă nativ datorită atenției bidir.
-- **Răspunsuri/text lungi** până la **2048 tokeni** prin generare pe blocuri.
-- **Generare paralelă în batch** — mai multe secvențe complete simultan (avans pe GPU, agregat pe
-  CPU-SIMD).
-- **Inferență locală / offline pe CPU** — Apple Silicon, laptopuri, VPS x86/ARM, fără GPU, cu cost
-  mic (ținta ADR 0003).
-- **Multilingual** — datele proprii mixează engleză + română (C4 ro, OPUS en–ro).
+- **Code generation** — function/algorithm completion (e.g. quicksort, palindrome).
+- **Code infilling (FIM)** — middle-of-file completion, possible natively thanks to bidirectional attention.
+- **Long text / answers** up to **2048 tokens** via block-wise generation.
+- **Parallel batch generation** — several full sequences at once (parallel on GPU, aggregated on CPU-SIMD).
+- **Local / offline CPU inference** — Apple Silicon, laptops, x86/ARM VPS, no GPU, low cost (ADR 0003 target).
+- **Multilingual** — our data mixes English + Romanian (C4 ro, OPUS en–ro).
 
-## Structura repository-ului
+## Repository structure
 
 ```
-.agents/              memoria proiectului (decizii, roadmap, research)
-docs/                 porting-to-diffusion.md (cum adaptăm un LLM AR la difuzie)
-config/               train_config.yaml (model, difuzie discretă, date)
-src/train/            training MDM (model, diffusion, data, train)
-src/infer/            inferență de referință PyTorch (generate/generate_long)
-convert/              convert_to_diffusion.py (AR -> difuzie inițial)
-eval/                 eval.py (reconstruction loss + generare)
-infra/                Modal + RunPod + R2 (trainers, download, inferență)
+.agents/             project memory (decisions, roadmap, research)
+docs/                porting-to-diffusion.md (how to adapt an AR LLM to diffusion)
+config/              train_config.yaml (model, discrete diffusion, data)
+src/train/           MDM training (model, diffusion, data, train)
+src/infer/           reference PyTorch inference (generate/generate_long)
+convert/             convert_to_diffusion.py (AR -> diffusion init)
+eval/                eval.py (reconstruction loss + generation)
+infra/               Modal + RunPod + R2 (trainers, download, inference)
 ```
 
-## Cum rulezi (cloud)
+## How to run (cloud)
 
-Nu instala nimic local; se rulează pe imagini Modal/RunPod.
+Do not install anything locally; run on Modal/RunPod images.
 
-1. **Descarcă modelul** `staticlabs/thunder-dlm-0.6b` în volumul Modal:
+1. **Download the model** `staticlabs/thunder-dlm-0.6b` into the Modal volume:
    `TF_MODEL=staticlabs/thunder-dlm-0.6b modal run infra/modal_download_open.py`
-2. **Inferență cu motorul nostru** (block-wise, 24 pași):
-   `TF_PROMPT="Scrie un quicksort in python." modal run infra/modal_infer_open.py`
-   - `TF_MODE=single` = o singură fereastră mare; `TF_MODE=block` (implicit) = pe blocuri.
-   - `TF_MODEL_DIR=<path din volum>` — de unde se încarcă checkpointul (implicit folderul
-     descărcat la pasul 1).
-   - `TF_STOP_AT_EOS=true` — oprește la `EOS` (implicit `false`, deci produce exact
+2. **Inference with our engine** (block-wise, 24 steps):
+   `TF_PROMPT="Write a quick sort algorithm in python." modal run infra/modal_infer_open.py`
+   - `TF_MODE=single` = one large window; `TF_MODE=block` (default) = block-wise.
+   - `TF_MODEL_DIR=<path in volume>` — where the checkpoint loads from (defaults to the folder
+     downloaded in step 1).
+   - `TF_STOP_AT_EOS=true` — stop at `EOS` (default `false`, so it produces exactly
      `TF_MAX_NEW_TOKENS`).
-   - `TF_GPU=A10G` etc. (implicit CPU). Măsurat pe A10G: **~215 tok/s** la 24 pași (blocuri).
-3. **Antrenare** — `modal run infra/modal_train.py -- --config config/train_config.yaml`
-   (checkpoint-uri în `/vol/checkpoints`, opțional R2).
-4. **Evaluare** — `python eval/eval.py --ckpt <path>`.
+   - `TF_GPU=A10G` etc. (default CPU). Measured on an A10G: **~215 tok/s** at 24 steps (block-wise).
+3. **Train** — `modal run infra/modal_train.py -- --config config/train_config.yaml`
+   (checkpoints in `/vol/checkpoints`, optionally R2).
+4. **Evaluate** — `python eval/eval.py --ckpt <path>`.
 
-### Exemplul 1 — completare de cod (blocuri)
+### Example 1 — code completion (block-wise)
 
 ```bash
 TF_PROMPT="Write a quick sort algorithm in python." TF_MAX_NEW_TOKENS=512 \
   TF_MODE=block TF_STEPS=24 TF_GPU=A10G modal run infra/modal_infer_open.py
 ```
 
-Produce o implementare de quicksort (aproximativ 512 tokeni), în ~2.4s pe A10G (24 pași).
+Produces a quicksort implementation (~512 tokens) in ~2.4 s on an A10G (24 steps).
 
-### Exemplul 2 — alt prompt, fereastră unică
+### Example 2 — another prompt, single window
 
 ```bash
 TF_PROMPT="Write a Python function that checks if a given string is a palindrome." \
@@ -132,33 +176,33 @@ TF_PROMPT="Write a Python function that checks if a given string is a palindrome
   modal run infra/modal_infer_open.py
 ```
 
-Aceleași moduri (`single` / `block`), același motor; schimbi doar promptul și numărul de tokeni
-generați. Motorul este auto-conținut: primește `mask_token_id` din tokenizer și `forward(x)->logits`
-din model.
+Same `single` / `block` modes, same engine; you only change the prompt and token count. The engine is
+self-contained: it takes `mask_token_id` from the tokenizer and `forward(x) -> logits` from the model.
+The prompt/output for this exact command is shown in
+[Input → output](#input--output).
 
-## Credențiale (doar env, niciodată în repo)
+## Credentials (env only, never in the repo)
 
 R2: `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`.
 HF: `modal secret create hf HF_TOKEN=<token>`.
 
-## Limitări / de validat
+## Limitations / to validate
 
-- Inferența curentă este **de referință PyTorch**, nu runtime-ul SIMD final (ADR 0003).
-- **Atenție bidirecțională**: se impune printr-o **mască 4D all-zero** la forward (nu prin
-  `is_causal=False`, care este suprascrisă de `_update_causal_mask`). Trebuie validată pe fiecare
-  arhitectură (HF variază) — vezi `.agents/AGENTS.md` și `docs/porting-to-diffusion.md`.
-- **Block-wise cu context în creștere** (până la 2048) depășește fereastra de antrenare (256) pentru
-  modelul nostru; ultimele blocuri se pot degrada ușor (repetiție) — luăm în calcul ferestre mai lungi
-  la antrenare.
-- **Calitatea la 24 de pași** trebuie măsurată pe modelul antrenat (cu cât mai mulți pași, cu atât
-  mai bine, la cost proporțional).
-- **`mask_token_id`**: tokenizerul are `<M>` = id **151665**; `generation_config.json` conține
-  `mask_token_id: 151643` (= `<|endoftext|>`/EOS) — **stale**, de ignorat.
+- Current inference is **reference PyTorch**, not the final SIMD runtime (ADR 0003).
+- **Bidirectional attention**: enforced via a **4D all-zero mask** at forward time (not via
+  `is_causal=False`, which is overridden by `_update_causal_mask`). Must be validated per architecture
+  (HF varies) — see `.agents/AGENTS.md` and `docs/porting-to-diffusion.md`.
+- **Block-wise with growing context** (up to 2048) exceeds the training window (256) for our model;
+  later blocks can degrade slightly (repetition) — we're considering longer windows at training time.
+- **Quality at 24 steps** must be measured on the trained model (more steps improve it at proportional cost).
+- **`mask_token_id`**: the tokenizer has `<M>` = id **151665**; `generation_config.json` contains
+  `mask_token_id: 151643` (= `<|endoftext|>`/EOS) — **stale, ignore it**.
 
-## Stare de verificare (motorul nostru)
+## Verification state (our engine)
 
-Pe A10G, cu motorul nostru (block-wise / single), atenție bidirecțională reală:
-- **24 pași, bloc 512 tok:** ~215 tok/s, ieșire coerentă (ex. quicksort).
-- **100 pași, fereastră 256 tok:** ~66 tok/s, ieșire coerentă.
-- Cauza key pentru calitate este **atenția bidirecțională reală**: fără masca 4D (adică `mask=None`,
-  implicit cauzal) ieșirea devine degenerată/necondiționată de prompt.
+On an A10G, with our engine (block-wise / single) and real bidirectional attention:
+- **24 steps, 512-token block:** ~215 tok/s, coherent output (e.g. quicksort).
+- **24 steps, 270 tokens (single window):** ~176 tok/s, coherent output (the palindrome example above).
+- **100 steps, 256-token window:** ~66 tok/s, coherent output.
+- The key driver of quality is **real bidirectional attention**: without the 4D mask (i.e. `mask=None`,
+  implicitly causal) the output becomes degenerate/uncorrelated to the prompt.
