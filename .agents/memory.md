@@ -6,9 +6,11 @@
 
 ## 1. Viziunea proiectului
 
-Construim un **model de limbaj bazat pe difuzie continuă** (non-autoregresiv), adaptat folosind
-tehnica **DiffuLLaMA** (adaptarea unui checkpoint autoregresiv existent la difuzie discretă/continuă),
-care generează **256 de tokeni în paralel** prin **18 pași de difuzie** (ADR 0007), cu **atenție bidirecțională**.
+Construim un **model de limbaj bazat pe difuzie mascată discretă** (non-autoregresiv), adaptat
+folosind tehnica **DiffuLLaMA** la varianta **MDM (Masked Diffusion Model)**. Generăm
+**256 de tokeni în paralel** prin
+**24 pași de difuzie** (ADR 0007), cu **atenție bidirecțională** și un token discret `[MASK]`.
+Ieșirile lungi (până la **2048 tokeni**) se fac **pe blocuri** de 256.
 
 Diferența cheie față de un LLM clasic: nu generăm token cu token, ci pornim dintr-o stare plină de
 zgomot/mască și rafinăm **întreaga secvență simultan** la fiecare pas. Cum am subliniat: contribuția
@@ -204,6 +206,83 @@ conversie. Părțile grele (SIMD de bază, cuantizare, backbone) provin din ggml
 **bucla de difuzie + sampler + kernel-urile de atenție non-cauzală**, nu rescrierea algoritmului de matmul.
 
 ---
+
+## 8c. Stare inferență (2026-09-03): baseline + diagnostic
+
+Am rulat inferența de referință (PyTorch, re-împachetat ca `infra/modal_infer.py`) pe
+`step_14939` (volumul `thunder-checkpoints`), cu config-ul de training. Rezultate:
+
+- **Viteză (256 tokeni, 24 pași):** CPU Modal **3.48 tok/s** (~74s); A10G (GPU mic) **372 tok/s** (~0.7s).
+- **Calitate: GARBAGE** (chineză/ebraică/poloneză amestecate).
+
+**Diagnostic (`infra/diag_loss.py` pe `step_14939`)** a **respins colapsul** (pred std=0.76) și a
+arătat că modelul e excelent la **reconstrucția pozițiilor mascate** (`mse[x0] MASKED=1e-4`), dar
+calea de referință `sample()` (Gaussian+`epsilon`, fără mascare) nu folosește forța asta. Cauze:
+program de zgomot slab (`ā(t=1)=0.784`), embeddings minuscule (`x0`-norm ~0.2), obiectiv amestecat
+(Gaussian+mascare+`epsilon`). Generare mascată pe checkpointul vechi => garbage repetitiv (antrenat
+doar cu `mask_ratio=0.25`). **=> Corecție:** obiectiv de mascare continuă + `x0` + curriculum de
+mascare (ADR 0009), implementat și smoke-testat.
+
+**Smoke retrain (80 pași din 0, `/vol/checkpoints/v2-masked-x0/step_75.pt`):** loss **1.91→0.025**,
+fără colaps. Generare la 80 pași încă repetitivă (doar 5M tokeni) — **rularea lungă e pending**
+(decizie utilizator; nu se cheltuiește compute acum).
+
+**Acesta NU e runtime-ul optimizat SIMD/ggml (ADR 0003)** — viteza CPU de mai sus e baseline
+PyTorch, nu ținta finală.
+
+## 8d. Migrare la mascare discretă (ADR 0010, 2026-09-03)
+
+Am evaluat obiectivul de difuzie continuu (ADR 0008/0009) pe mărimea noastră (Qwen3-0.6B): la volum mic
+de antrenare nu scoate text coerent și e sensibil la scara embeddings (vectori off-manifold). Am migrat
+la **mascare discretă (MDM)**: token `[MASK]` în vocabular, rapoarte de mascare uniforme din `[0,1]`,
+loss = **cross-entropy mascată** (`mdm_loss + path_loss`), atenție bidirecțională, fără condiționare de
+timp.
+
+Decizia utilizatorului (prin întrebare): **migrăm la mascare discretă**, **păstrăm 24 pași / 256 tokeni**
+și **suportăm ieșiri până la 2048** prin **generare pe blocuri (block-wise)**: fiecare pas de difuzie
+generează 256 tokeni, apoi îi adaugă ca context și repetă (8× pentru 2048).
+
+**Implementat (2026-09-03):**
+- `src/train/diffusion.py` — `MaskedDiffusion` (CE mascată discretă, `mdm_loss + path_loss`).
+- `src/train/model.py` — `[MASK]` + `resize_token_embeddings`; `forward(input_ids)->logits`;
+  `generate()` unmask progresiv discret; `generate_long()` pe blocuri. Scad `time_mlp`/`mask_embedding`.
+- `src/train/train.py`, `config/train_config.yaml`, `eval/eval.py`, `src/infer/inference.py`,
+  `infra/diag_loss.py`, `infra/modal_infer.py`, `infra/bench_gpu.py`, `convert/convert_to_diffusion.py` — actualizate.
+- Toate modulele trec `py_compile`.
+
+**Config-ul actual:** `seq_len: 256`, `infer_steps: 24`, `mask_ratio_min: 0.002`, `mask_ratio_max: 0.998`.
+**De reținut:** reantrenare de la 0 (checkpoint-urile continue sunt incompatibile). Modelul învață pe
+ferestre de 256; contextul agregat la generarea pe blocuri depășește fereastra de antrenare — dacă
+coerența pe distanțe lungi suferă, luăm în calcul ferestre mai lungi la antrenare.
+
+## 8e. ROOT-CAUSE inferență: atenția bidirecțională trebuie impusă prin mască 4D (ADR 0011)
+
+Observam că modelul denoisează corect de la pași mici, dar motorul nostru scotea garbage la orice număr
+de pași. Am izolat cauza: **modelul MDM trebuie rulat cu atenție BIDIRECȚIONALĂ, iar motorul nostru rula
+cauzal.**
+
+Mecanismul (validat pe GPU):
+- `_update_causal_mask` (HF) construiește mască 4D **cauzală** când `attention_mask=None` (sau 2D).
+  Acea mască e pasată direct kernelului și **suprascrie** `is_causal=False`. Deci `is_causal=False` + `mask=None`
+  = cauzal (no-op).
+- Singura cale reală de bidirecțional: **mască 4D all-zero** (folosită direct de `_update_causal_mask`).
+
+Experimente decisive (A10G, același model + bucla noastră):
+- **cauzal** → garbage; **bidirecțional (mască 4D all-zero)** → **quicksort coerent** (`def quick_sort`, `partition`, `assert quick_sort([5,6,8,10,1,2,1]) == ...`).
+- Calea de referință `diffusion_generate` (pasează mask=None) → garbage (adică și ea rula cauzal în
+  acest container; doar căile care impun mască 4D dau output bun).
+
+Fix aplicat:
+- `infra/modal_infer_open.py`: forward cu mască 4D all-zero; viteză **66.2 tok/s** la 100 pași /
+  264 tokeni, output coerent.
+- `src/train/model.py`: `DiffusionLM.forward` trece mască 4D (bool all-`False`) în loc de `attention_mask=None`;
+  `make_bidirectional` doc. actualizat (NU e suficient de una singură).
+
+**IMPORTANT:** același bug latent afecta modelul nostru (Qwen3-0.6B) — `attention_mask=None` la backward =
+atenție cauzală, deci obiectivul MDM s-ar antrena cauzal. Fixul de mai sus trebuie validat pe Qwen3 exact
+printr-un smoke test cloud (AGENTS.md).
+**Starea inferenței:** motorul nostru funcționează acum (output coerent). Validarea pe Qwen3-0.6B +
+reantrenare MDM de la 0: **pending** (decizie utilizator privind compute).
 
 ## 9. Întrebări deschise (una cu una cu utilizatorul)
 

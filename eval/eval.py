@@ -22,7 +22,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.train.data import PackedDataset  # noqa: E402
-from src.train.diffusion import ContinuousDiffusion  # noqa: E402
+from src.train.diffusion import MaskedDiffusion  # noqa: E402
 from src.train.model import DiffusionLM  # noqa: E402
 
 
@@ -33,6 +33,7 @@ def load_config(path: str) -> dict:
 
 @torch.no_grad()
 def reconstruction_loss(model, diffusion, cfg, device, limit: int = 200):
+    """Average masked cross-entropy on held-out text (down-trending == learning)."""
     ds = PackedDataset(
         cfg["data"]["sources"][:1],
         model.tokenizer,
@@ -46,18 +47,16 @@ def reconstruction_loss(model, diffusion, cfg, device, limit: int = 200):
         except StopIteration:
             break
         batch = ids.unsqueeze(0).to(device)
-        x0 = model.embed_tokens(batch)
-        t = torch.rand(batch.shape[0], device=device)
-        loss = diffusion.training_loss(model, x0, model.mask_embedding.data, t)
+        loss = diffusion.training_loss(model, batch)
         losses.append(loss.item())
     return sum(losses) / max(1, len(losses))
 
 
 @torch.no_grad()
-def sample_text(model, diffusion, prompt: str, device, steps: int | None = None) -> str:
+def sample_text(model, diffusion, prompt: str, device, steps: int | None = None,
+                target_len: int = 256) -> str:
     ids = model.tokenizer(prompt, return_tensors="pt").input_ids.to(device)
-    embeds = model.sample(ids, diffusion, steps=steps)
-    tokens = model.decode_embeddings_to_tokens(embeds)
+    tokens = model.generate(ids, diffusion, target_len=target_len, steps=steps)
     return model.tokenizer.decode(tokens[0], skip_special_tokens=True)
 
 
@@ -76,15 +75,10 @@ def main():
     model.eval()
     model.load_state_dict(torch.load(args.ckpt, map_location=device)["model"])
 
-    diffusion = ContinuousDiffusion(
-        hidden_size=model.hidden_size,
-        schedule=cfg["diffusion"]["schedule"],
-        beta_start=cfg["diffusion"]["beta_start"],
-        beta_end=cfg["diffusion"]["beta_end"],
-        train_steps=cfg["diffusion"]["train_steps"],
+    diffusion = MaskedDiffusion(
         infer_steps=args.steps or cfg["diffusion"]["infer_steps"],
-        prediction=cfg["diffusion"]["prediction"],
-        mask_ratio=cfg["diffusion"]["mask_ratio"],
+        mask_ratio_min=cfg["diffusion"].get("mask_ratio_min", 1 / 500),
+        mask_ratio_max=cfg["diffusion"].get("mask_ratio_max", 1 - 1 / 500),
     )
 
     recon = reconstruction_loss(model, diffusion, cfg, device)

@@ -25,7 +25,7 @@ import torch
 import yaml
 
 from src.train.data import build_loader
-from src.train.diffusion import ContinuousDiffusion
+from src.train.diffusion import MaskedDiffusion
 from src.train.model import DiffusionLM
 
 def load_config(path: str) -> dict:
@@ -35,15 +35,10 @@ def load_config(path: str) -> dict:
 
 def build_model_and_diffusion(cfg: dict, device: torch.device):
     model = DiffusionLM(cfg["model"]["base"]).to(device)
-    diffusion = ContinuousDiffusion(
-        hidden_size=model.hidden_size,
-        schedule=cfg["diffusion"]["schedule"],
-        beta_start=cfg["diffusion"]["beta_start"],
-        beta_end=cfg["diffusion"]["beta_end"],
-        train_steps=cfg["diffusion"]["train_steps"],
-        infer_steps=cfg["diffusion"]["infer_steps"],
-        prediction=cfg["diffusion"]["prediction"],
-        mask_ratio=cfg["diffusion"]["mask_ratio"],
+    diffusion = MaskedDiffusion(
+        infer_steps=cfg["diffusion"].get("infer_steps", 24),
+        mask_ratio_min=cfg["diffusion"].get("mask_ratio_min", 1 / 500),
+        mask_ratio_max=cfg["diffusion"].get("mask_ratio_max", 1 - 1 / 500),
     )
     return model, diffusion
 
@@ -111,24 +106,12 @@ def run_train(cfg, out, max_steps=None, ckpt_every_steps=None, upload_r2=False):
     model, diffusion = build_model_and_diffusion(cfg, device)
     model.set_train_ctx()
 
-    # Two parameter groups: base weights (inherited from the AR init) are kept at a
-    # conservative LR; newly added modules (time_mlp, mask_embedding) get a higher LR so
-    # they do not lag behind the frozen-knowledge backbone.
-    base_params, new_params = [], []
-    for name, p in model.named_parameters():
-        if not p.requires_grad:
-            continue
-        if name.startswith("time_mlp") or name.endswith("mask_embedding"):
-            new_params.append(p)
-        else:
-            base_params.append(p)
+    # Single LR group (discrete MDM): we continue pretraining the whole AR model on the
+    # masked-reconstruction objective. The single new [MASK] embedding row learns along with
+    # the rest at the base LR.
     lr_base = cfg["training"]["learning_rate"]
-    lr_new = lr_base * cfg["training"].get("new_params_lr_mult", 5.0)
     opt = torch.optim.AdamW(
-        [
-            {"params": base_params, "lr": lr_base},
-            {"params": new_params, "lr": lr_new},
-        ],
+        model.parameters(),
         lr=lr_base,
         weight_decay=cfg["training"]["weight_decay"],
     )
@@ -158,11 +141,21 @@ def run_train(cfg, out, max_steps=None, ckpt_every_steps=None, upload_r2=False):
             download_file(f"{r2_prefix}/step_{latest}.pt", local)
     if latest is not None:
         ckpt = torch.load(out_dir / f"step_{latest}.pt", map_location=device)
-        model.load_state_dict(ckpt["model"])
-        opt.load_state_dict(ckpt["optimizer"])
-        start_step = ckpt["step"]
-        tokens_seen = ckpt["tokens_seen"]
-        print(f"Resumed from step {start_step} (tokens seen {tokens_seen})", flush=True)
+        try:
+            model.load_state_dict(ckpt["model"])
+            opt.load_state_dict(ckpt["optimizer"])
+            start_step = ckpt["step"]
+            tokens_seen = ckpt["tokens_seen"]
+            print(f"Resumed from step {start_step} (tokens seen {tokens_seen})", flush=True)
+        except (RuntimeError, KeyError, ValueError) as e:
+            # The objective changed (continuous -> discrete); old checkpoints are
+            # structurally incompatible, so start clean from step 0.
+            print(f"[train] ignoring incompatible checkpoint (objective changed): {e}", flush=True)
+            start_step = 0
+            tokens_seen = 0
+            opt = torch.optim.AdamW(
+                model.parameters(), lr=lr_base, weight_decay=cfg["training"]["weight_decay"]
+            )
 
     model.train()
     cfg_t = cfg["training"]
@@ -248,9 +241,7 @@ def run_train(cfg, out, max_steps=None, ckpt_every_steps=None, upload_r2=False):
         if _first_forward:
             print("[train] first forward start", flush=True)
         _t_fwd = _time.time()
-        x0 = model.embed_tokens(batch)  # [B, L, D] clean embeddings
-        t = torch.rand(B, device=device)  # continuous timesteps in [0, 1]
-        loss = diffusion.training_loss(model, x0, model.mask_embedding.data, t)
+        loss = diffusion.training_loss(model, batch)  # [B, L] token ids -> discrete masked CE
         loss = loss / cfg_t["grad_accum"]
         loss.backward()
         if _first_forward:
@@ -291,8 +282,7 @@ def run_train(cfg, out, max_steps=None, ckpt_every_steps=None, upload_r2=False):
                         "train/tokens_seen": tokens_seen,
                         "train/tokens_per_sec": tps,
                         "train/grad_norm": grad_norm,
-                        "train/lr_base": opt.param_groups[0]["lr"],
-                        "train/lr_new": opt.param_groups[1]["lr"] if len(opt.param_groups) > 1 else opt.param_groups[0]["lr"],
+                        "train/lr": opt.param_groups[0]["lr"],
                         "train/token_budget_fraction": min(1.0, tokens_seen / max(1, cfg_t["total_tokens"])),
                     }
                 )

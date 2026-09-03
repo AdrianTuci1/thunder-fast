@@ -73,7 +73,7 @@ checkpoints_volume = modal.Volume.from_name("thunder-checkpoints", create_if_mis
     timeout=86400,  # 24h headroom
     memory=32768,
 )
-def train(config_text: str, max_steps: int | None = None, ckpt_every_steps: int | None = None):
+def train(config_text: str, max_steps: int | None = None, ckpt_every_steps: int | None = None, out_dir: str | None = None):
     import sys
 
     import yaml
@@ -83,9 +83,10 @@ def train(config_text: str, max_steps: int | None = None, ckpt_every_steps: int 
     from src.train.train import run_train
 
     cfg = yaml.safe_load(config_text)
+    out_dir = out_dir or os.environ.get("TF_OUT") or CHECKPOINT_DIR
     run_train(
         cfg,
-        CHECKPOINT_DIR,
+        out_dir,
         max_steps=max_steps,
         ckpt_every_steps=ckpt_every_steps,
     )
@@ -99,12 +100,18 @@ def run():
     max_steps = int(os.environ["TF_MAX_STEPS"]) if os.environ.get("TF_MAX_STEPS") else None
     ckpt_every_steps = int(os.environ["TF_CKPT_EVERY_STEPS"]) if os.environ.get("TF_CKPT_EVERY_STEPS") else None
     gpu = os.environ.get("TF_GPU", "H100")
+    out_dir = os.environ.get("TF_OUT")
+    block = bool(os.environ.get("TF_BLOCK"))
 
     # Read the YAML as a raw string locally (no torch/yaml needed on the laptop); the
     # container parses it where PyYAML is installed.
     config_text = (REPO / config).read_text(encoding="utf-8")
     # `.spawn()` (not `.remote()`) fires the long training on Modal's infra and returns
     # immediately, so an ephemeral local client can exit and the 4h run keeps going
-    # server-side. The run is independent of this process's lifetime.
-    call = train.with_options(gpu=gpu).spawn(config_text, max_steps=max_steps, ckpt_every_steps=ckpt_every_steps)
-    print(f"[launch] spawned training call {call.object_id}; safe to disconnect", flush=True)
+    # server-side. The run is independent of this process's lifetime. `.remote()` blocks
+    # and streams logs (handy for a short smoke test).
+    if block:
+        train.remote(config_text, max_steps=max_steps, ckpt_every_steps=ckpt_every_steps, out_dir=out_dir)
+    else:
+        call = train.with_options(gpu=gpu).spawn(config_text, max_steps=max_steps, ckpt_every_steps=ckpt_every_steps, out_dir=out_dir)
+        print(f"[launch] spawned training call {call.object_id}; safe to disconnect", flush=True)

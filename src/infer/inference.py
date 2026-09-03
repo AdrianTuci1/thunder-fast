@@ -20,7 +20,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.train.diffusion import ContinuousDiffusion  # noqa: E402
+from src.train.diffusion import MaskedDiffusion  # noqa: E402
 from src.train.model import DiffusionLM  # noqa: E402
 
 
@@ -30,11 +30,7 @@ def main():
     ap.add_argument("--base-model", default=None, help="defaults to the ckpt's base_model")
     ap.add_argument("--prompt", default="Bună ziua, aici este un test de difuzie.")
     ap.add_argument("--steps", type=int, default=24)
-    ap.add_argument("--schedule", default="linear")
-    ap.add_argument("--prediction", default="x0")
-    ap.add_argument("--mask-ratio", type=float, default=0.25)
-    ap.add_argument("--beta-start", type=float, default=0.0001)
-    ap.add_argument("--beta-end", type=float, default=0.02)
+    ap.add_argument("--target", type=int, default=256, help="generated tokens (one window)")
     ap.add_argument("--gpu", action="store_true", help="use CUDA (default CPU)")
     args = ap.parse_args()
 
@@ -47,31 +43,21 @@ def main():
     model.load_state_dict(ckpt["model"])
     model.eval()
 
-    diffusion = ContinuousDiffusion(
-        hidden_size=model.hidden_size,
-        schedule=args.schedule,
-        beta_start=args.beta_start,
-        beta_end=args.beta_end,
-        train_steps=args.steps,
-        infer_steps=args.steps,
-        prediction=args.prediction,
-        mask_ratio=args.mask_ratio,
-    )
+    diffusion = MaskedDiffusion(infer_steps=args.steps)
 
     ids = model.tokenizer(args.prompt, return_tensors="pt").input_ids.to(device)
     print(f"prompt ({ids.shape[1]} tokens): {args.prompt!r}", flush=True)
 
     # Warm-up + timing.
     with torch.no_grad():
-        embeds = model.sample(ids, diffusion)
+        model.generate(ids, diffusion, target_len=args.target, steps=args.steps)
     t0 = time.time()
     with torch.no_grad():
-        embeds = model.sample(ids, diffusion)
+        tokens = model.generate(ids, diffusion, target_len=args.target, steps=args.steps)
     dt = time.time() - t0
 
-    tokens = model.decode_embeddings_to_tokens(embeds)
     text = model.tokenizer.decode(tokens[0], skip_special_tokens=True)
-    # Output length is fixed to seq_len (256) by the denoising loop.
+    # Output length is fixed to the generation window (seq_len = 256 by default).
     out_tokens = tokens.shape[1]
 
     print(f"tokens/sec: {out_tokens / dt:.2f}  ({dt:.2f}s for {out_tokens} tokens, {args.steps} steps)")

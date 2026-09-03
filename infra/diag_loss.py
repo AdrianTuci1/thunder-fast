@@ -65,7 +65,7 @@ def diag(config_text: str, step: int, max_examples: int = 32):
     sys.path.insert(0, REPO_REMOTE)
 
     from src.train.data import PackedDataset
-    from src.train.diffusion import ContinuousDiffusion
+    from src.train.diffusion import MaskedDiffusion
     from src.train.model import DiffusionLM
 
     cfg = yaml.safe_load(config_text)
@@ -74,15 +74,18 @@ def diag(config_text: str, step: int, max_examples: int = 32):
 
     print(f"[diag] loading Qwen3-0.6B + checkpoint step_{step}.pt ...", flush=True)
     model = DiffusionLM(cfg["model"]["base"]).to(device)
-    ckpt = torch.load(f"{CHECKPOINT_DIR}/step_{step}.pt", map_location=device)
-    model.load_state_dict(ckpt["model"])
     model.eval()
+    try:
+        ckpt = torch.load(f"{CHECKPOINT_DIR}/step_{step}.pt", map_location=device)
+        model.load_state_dict(ckpt["model"])
+    except (RuntimeError, KeyError, ValueError) as e:
+        print(f"[diag] WARNING: checkpoint incompatible (objective changed), using base model: {e}", flush=True)
     for p in model.parameters():
         p.requires_grad_(False)
 
     emb = model.word_embeddings.weight.data
-    print(f"[diag] hidden={model.hidden_size} | emb std={emb.std().item():.4f} | "
-          f"emb row-norm mean={emb.norm(dim=1).mean().item():.4f}", flush=True)
+    print(f"[diag] hidden={model.hidden_size} | vocab={model.vocab_size} | "
+          f"mask_token_id={model.mask_token_id} | emb std={emb.std().item():.4f}", flush=True)
 
     # A real batch of packed text.
     ds = PackedDataset(
@@ -94,47 +97,41 @@ def diag(config_text: str, step: int, max_examples: int = 32):
     batch = torch.stack([next(it) for _ in range(max_examples)]).to(device)
     print(f"[diag] batch {tuple(batch.shape)} | unique tokens: {batch.unique().numel()}", flush=True)
 
-    B, L, D = batch.shape[0], seq_len, model.hidden_size
-    x0 = model.embed_tokens(batch)
-    t = torch.rand(B, device=device)
-    noise = torch.randn_like(x0)
-    print(f"[diag] x0 per-token norm mean={x0.norm(dim=-1).mean().item():.4f}", flush=True)
-
-    diff = ContinuousDiffusion(
-        hidden_size=model.hidden_size,
-        schedule=cfg["diffusion"]["schedule"],
-        beta_start=cfg["diffusion"]["beta_start"],
-        beta_end=cfg["diffusion"]["beta_end"],
-        train_steps=cfg["diffusion"]["train_steps"],
-        infer_steps=cfg["diffusion"]["infer_steps"],
-        prediction=cfg["diffusion"]["prediction"],
-        mask_ratio=cfg["diffusion"]["mask_ratio"],
+    diff = MaskedDiffusion(
+        infer_steps=cfg["diffusion"].get("infer_steps", 24),
+        mask_ratio_min=cfg["diffusion"].get("mask_ratio_min", 1 / 500),
+        mask_ratio_max=cfg["diffusion"].get("mask_ratio_max", 1 - 1 / 500),
     )
 
-    x_t = diff.q_sample(x0, t, noise)
-    use_mask = torch.rand(B, L, device=device) < cfg["diffusion"]["mask_ratio"]
-    mask_emb = model.mask_embedding.data.view(1, 1, D).expand(B, L, D).clone()
-    x_t = torch.where(use_mask.unsqueeze(-1), mask_emb, x_t)
+    # Discrete MDM: mask a random per-sample fraction, run the model, measure CE + accuracy
+    # at masked positions. A healthy adapted model has masked-token accuracy well above the
+    # vocab-size baseline and a CE that decreases. (Collapse would show near-random accuracy.)
+    r = diff._sample_mask_ratio(batch.shape[0], device)
+    use_mask = torch.rand_like(batch.float()) < r.unsqueeze(-1)
+    x_m = torch.where(use_mask, torch.full_like(batch, model.mask_token_id), batch)
+    logits = model(x_m)
+    pred_logits = logits[..., :-1, :].contiguous()
+    labels = batch[..., 1:].contiguous()
+    valid = use_mask[..., 1:]
 
-    pred = model(x_t, t)
-    target = diff._prediction_target(x0, noise, t)  # follows cfg["diffusion"]["prediction"]
+    token_loss = torch.nn.functional.cross_entropy(
+        pred_logits.reshape(-1, pred_logits.size(-1)),
+        labels.reshape(-1),
+        reduction="none",
+    ).reshape_as(valid)
+    valid_any = valid.any()
+    mdm_loss = (token_loss * valid).sum() / (valid.sum() + 1e-8)
 
-    mse = (pred - target).pow(2).mean(dim=-1)  # [B, L]
-    print(f"[diag] t range=({t.min().item():.3f},{t.max().item():.3f})", flush=True)
-    print(f"[diag] ||x0||={x0.norm().item():.4f} ||x_t||={x_t.norm().item():.4f} ||pred||={pred.norm().item():.4f}", flush=True)
-    print(f"[diag] ||pred-target||={(pred - target).norm().item():.4f} ||pred-x_t||={(pred - x_t).norm().item():.4f}", flush=True)
-    print(f"[diag] frac_masked={use_mask.float().mean().item():.4f}", flush=True)
-    print(f"[diag] mse ALL mean={mse.mean().item():.6f}", flush=True)
-    if use_mask.any():
-        print(f"[diag] mse MASKED  mean={mse[use_mask].mean().item():.6f} (n={int(mse[use_mask].numel())})", flush=True)
-    print(f"[diag] mse UNMASKED mean={mse[~use_mask].mean().item():.6f} (n={int(mse[~use_mask].numel())})", flush=True)
+    pred_tok = pred_logits.argmax(dim=-1)
+    acc_masked = (pred_tok[valid] == labels[valid]).float().mean().item() if valid_any else float("nan")
+    acc_all = (pred_tok == labels).float().mean().item()
 
-    masked_pred = pred[use_mask]
-    masked_x0 = x0[use_mask]
-    masked_mask_emb = mask_emb[use_mask]
-    print(f"[diag] masked pred mean={masked_pred.mean().item():.4f} std={masked_pred.std().item():.4f}", flush=True)
-    print(f"[diag] masked x0   mean={masked_x0.mean().item():.4f} std={masked_x0.std().item():.4f}", flush=True)
-    print(f"[diag] ||masked pred - mask_emb||={(masked_pred - masked_mask_emb).norm().item():.4f}", flush=True)
+    # Random baseline for a vocab of this size.
+    base_acc = 1.0 / model.vocab_size
+
+    print(f"[diag] mask_ratio range=({r.min().item():.3f},{r.max().item():.3f}) frac_masked={use_mask.float().mean().item():.4f}", flush=True)
+    print(f"[diag] mdm_loss(loss*full)={mdm_loss.item():.4f}", flush=True)
+    print(f"[diag] masked_token_acc={acc_masked:.4f} (random={base_acc:.6f}) | all_acc={acc_all:.4f}", flush=True)
 
     print("[diag] done", flush=True)
     return "diag done"

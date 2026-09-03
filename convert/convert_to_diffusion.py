@@ -1,10 +1,11 @@
-"""Build a diffusion-adapted checkpoint from a pretrained autoregressive LLM.
+"""Build a masked-diffusion-adapted checkpoint from a pretrained autoregressive LLM.
 
-This produces the *initial* diffusion weights (base AR weights + freshly-initialised
-mask embedding and time-conditioning MLP) so training has a clean start. It writes:
+This produces the *initial* discrete MDM weights: the base AR weights plus a newly added
+`[MASK]` token row in the embedding matrix and LM head, so training has a clean start.
+It writes:
 
-    model/config.json           diffusion config (bidirectional flag, schedule, prediction, ...)
-    model/diffusion_model.safetensors   the full adapted weights
+    model/config.json                       diffusion config (bidirectional flag, mask_token_id, ...)
+    model/diffusion_model.safetensors       the full adapted weights
 
 NOTE: exporting to GGUF / the custom ggml runtime (the real "binary" for CPU inference)
 is a separate downstream step that we build later (ADR 0003). This script is the
@@ -23,11 +24,9 @@ from safetensors.torch import save_file
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-model", default="Qwen/Qwen2.5-0.5B")
+    ap.add_argument("--base-model", default="Qwen/Qwen3-0.6B")
     ap.add_argument("--out", default="model")
-    ap.add_argument("--prediction", default="x0")
-    ap.add_argument("--train-steps", type=int, default=24)
-    ap.add_argument("--infer-steps", type=int, default=10)
+    ap.add_argument("--infer-steps", type=int, default=24)
     args = ap.parse_args()
 
     import sys
@@ -47,15 +46,12 @@ def main():
 
     cfg = {
         "base_model": args.base_model,
-        "arch": "diffusion_llm",
+        "arch": "discrete_diffusion_llm",
         "bidirectional_attention": True,
-        "time_conditioning": True,
-        "prediction": args.prediction,
-        "train_steps": args.train_steps,
+        "mask_token_id": model.mask_token_id,
         "infer_steps": args.infer_steps,
         "hidden_size": model.hidden_size,
         "vocab_size": model.vocab_size,
-        "mask_embedding_initialized": True,
     }
     (out / "config.json").write_text(json.dumps(cfg, indent=2))
     print(f"Wrote diffusion checkpoint to {out}/ (config.json + diffusion_model.safetensors)")

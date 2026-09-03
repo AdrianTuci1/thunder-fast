@@ -1,4 +1,4 @@
-# train_config.yaml — configurarea adaptării AR -> difuzie continuă
+# train_config.yaml — configurarea adaptării AR -> difuzie mascată discretă (MDM)
 # Valori scalate pentru un buget de ~24h pe GPU Modal/RunPod, salvare în R2.
 
 model:
@@ -8,24 +8,18 @@ model:
   use_gqa: true
 
 diffusion:
-  # Longimea secvenței pentru un pas de denoising (generare paralelă).
+  # Lungimea unei ferestre de generare (denoising paralel). Pentru ieșiri lungi se face
+  # generare pe blocuri (block-wise) de această lungime.
   seq_len: 256
-  # Pași de difuzie: 24 (standardul LLaDA — tavan de calitate mai bun). Ține training/inference
-  # pe aceeași valoare, ca programul de zgomot să fie consistent. Reduci doar dacă vrei viteză
-  # mai mare la inferență (16 = mai rapid, 24 = calitate).
-  train_steps: 24
+  # Pași de difuzie la inferență: 24 (standardul LLaDA — tavan de calitate mai bun).
+  # Discret MDM nu are pași în antrenare; pașii apar DOAR la unmask progresiv.
+  # Reduci pentru viteză mai mare (16 = mai rapid, 24 = calitate).
   infer_steps: 24
-  # Program de zgomot: "linear" sau "cosine".
-  schedule: "linear"
-  # Zgomot maxim/minim de diffuzie (β-limite pentru variance-preserving).
-  beta_start: 0.0001
-  beta_end: 0.02
-  # Parametru de mascare (0..1) — fracțiunea de poziții absorbite pe lângă Gaussian.
-  mask_ratio: 0.25
-  # Predictia modelului: "epsilon" (zgomot), "x0" (curat) sau "v" (velocity).
-  # Folosim "epsilon": predicția x0 duce la posterior collapse (modelul învață să emită
-  # media embeddings ~0, MSE ~ varianța lui x0, gradienți ~0). Epsilon evită soluția trivială.
-  prediction: "epsilon"
+  # Curriculum de mascare (discret): fracțiunea de poziții mascate se eșantionează per
+  # sample uniform în [min, max]. Min > 0 și max < 1 ca să nu existe secvențe total
+  # nemascate sau total mascate (uzual: [1/500, 1-1/500]).
+  mask_ratio_min: 0.002
+  mask_ratio_max: 0.998
 
 training:
   # Buget total de tokeni.
@@ -46,8 +40,6 @@ training:
   weight_decay: 0.01
   max_grad_norm: 1.0
   bf16: true
-  # Parametrii NOI (time_mlp, mask_embedding) primesc LR mai mare, ca să convergă repede.
-  new_params_lr_mult: 5.0
   # TODO(optional): EMA (decay ~0.999) ajută stabilitatea în antrenare de difuzie; neimplementat încă.
 
   # Oprire elegantă după acest timp real (wall-clock); la final se salvează un checkpoint.

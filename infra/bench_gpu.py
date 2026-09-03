@@ -52,20 +52,11 @@ def bench():
     import torch
 
     sys.path.insert(0, REPO_REMOTE)
-    from src.train.diffusion import ContinuousDiffusion
+    from src.train.diffusion import MaskedDiffusion
     from src.train.model import DiffusionLM
 
     model = DiffusionLM("Qwen/Qwen3-0.6B").to("cuda")
-    diff = ContinuousDiffusion(
-        hidden_size=model.hidden_size,
-        schedule="linear",
-        beta_start=0.0001,
-        beta_end=0.02,
-        train_steps=24,
-        infer_steps=24,
-        prediction="x0",
-        mask_ratio=0.25,
-    )
+    diff = MaskedDiffusion(infer_steps=24)
     model.set_train_ctx()
     model.train()
     L = 256
@@ -89,9 +80,7 @@ def bench():
     def step(batch):
         # Fresh inputs each step (like a new micro-batch) -> independent autograd graph.
         inp = torch.randint(0, model.vocab_size, (batch, L), device="cuda")
-        x0 = model.embed_tokens(inp)
-        t = torch.rand(batch, device="cuda")
-        loss = diff.training_loss(model, x0, model.mask_embedding.data, t)
+        loss = diff.training_loss(model, inp)
         loss.backward()
         model.zero_grad()
 

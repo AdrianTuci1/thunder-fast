@@ -23,7 +23,13 @@
 - [x] ~Convertire checkpoint AR -> difuzie~ — schelet în `src/train/model.py` + `convert/convert_to_diffusion.py` (NEVALIDAT).
 - [x] ~Implementăm bucla de denoising~ — schelet în `src/train/diffusion.py` + `model.sample()` (NEVALIDAT).
 - [x] ~Training de difuzie la scară mică~ — schelet în `src/train/train.py` (NEVALIDAT).
-- [ ] Rulare reală pe cloud (Modal/RunPod) + validare calitate vs model autoregresiv de referință.
+- [x] **Obiectiv corectat (ADR 0009):** mascare continuă + `x0` + curriculum de mascare (în loc de
+      Gaussian+`epsilon` care dădea garbage/colaps). Implementat + smoke-testat (80 pași, loss
+      `1.91→0.025`, fără colaps).
+- [ ] **Rulare lungă de la 0** (~576M tokeni / 4h) + validare calitate vs autoregresiv.
+      **PENDING** — decizie utilizator (nu se cheltuiește compute acum). Checkpoint de continuare:
+      `/vol/checkpoints/v2-masked-x0/step_75.pt`.
+- [ ] (de decalat la discrete LLaDA) dacă run-ul lung continuu nu dă text coerent.
 
 ## Faza 3 — Cuantizare & runtime
 - [x] ~~Integrare în llama.cpp (fork) SAU binar propriu~~ — **DECIS (ADR 0003):** binar custom
