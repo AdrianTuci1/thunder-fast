@@ -7,6 +7,7 @@ window in parallel over 24 diffusion steps with bidirectional attention and a `[
 | Doc | Covers |
 |---|---|
 | [architecture](architecture.md) | How a causal AR model becomes a bidirectional diffusion denoiser; the model-agnostic core |
+| [moe-diffusion-architecture](moe-diffusion-architecture.md) | The 30B-MoE (Qwen3-30B-A3B) encoder-decoder diffusion port: shared vs. expert block, what we add |
 | [training](training.md) | Config, data pipeline, objective, training loop, checkpointing, R2 resume |
 | [inference](inference.md) | Reference PyTorch engine, block-wise generation, measured speeds |
 | [runtime](runtime.md) | The standalone ggml runtime: CLI + OpenAI-compatible server, build → R2 |
