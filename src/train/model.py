@@ -241,8 +241,8 @@ class DiffusionLM(nn.Module):
         config._attn_implementation = "sdpa"
         config.use_cache = False
         # Set `use_cache`/attn on the *config*, not as `from_pretrained` kwargs: recent
-        # transformers (4.51+) forwards unknown kwargs to the model __init__, and Qwen3's
-        # constructor (Qwen3ForCausalLM) does not accept `use_cache`.
+        # transformers (4.51+) forwards unknown kwargs to the model __init__, and Qwen2's
+        # constructor (Qwen2ForCausalLM) does not accept `use_cache`.
         self.base_model = AutoModelForCausalLM.from_pretrained(
             base_model_id, config=config
         )

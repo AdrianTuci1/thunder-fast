@@ -1,6 +1,6 @@
 # thunder-fast
 
-A non-autoregressive **discrete masked diffusion** model adapted from **Qwen3-0.6B**. It reconstructs a
+A non-autoregressive **discrete masked diffusion** model adapted from **Qwen2-0.5B**. It reconstructs a
 whole 256-token window in parallel over 24 diffusion steps, using bidirectional attention and a
 `[MASK]` token. Long outputs (up to 2048 tokens) are chained block-wise in 256-token windows.
 
@@ -43,7 +43,7 @@ step, so a production AR decoder with KV-cache is substantially faster per strea
 
 ## Related work
 
-This project adapts a pretrained **autoregressive** model (Qwen3-0.6B) into a masked-diffusion model
+This project adapts a pretrained **autoregressive** model (Qwen2-0.5B) into a masked-diffusion model
 rather than training a diffusion LM from scratch. This mirrors the finding behind **DiffuLLaMA**:
 training a diffusion language model from scratch at scale remains challenging, whereas starting from a
 pretrained AR backbone lets the model learn language first and then be adapted to generate through

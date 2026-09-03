@@ -1,4 +1,4 @@
-// tokenizer/tokenizer.cpp — byte-level BPE implementation (Qwen3 / GPT-2 style).
+// tokenizer/tokenizer.cpp — byte-level BPE implementation (Qwen2 / GPT-2 style).
 #include "tokenizer/tokenizer.h"
 
 #include <fstream>

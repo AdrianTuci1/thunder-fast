@@ -1,7 +1,7 @@
 # thunder-fast — documentation
 
 This maps the repository and explains how the pieces fit. The model is a **non-autoregressive
-discrete masked-diffusion (MDM)** model adapted from **Qwen3-0.6B**: it reconstructs a whole
+discrete masked-diffusion (MDM)** model adapted from **Qwen2-0.5B**: it reconstructs a whole
 window in parallel over 24 diffusion steps with bidirectional attention and a `[MASK]` token.
 
 | Doc | Covers |

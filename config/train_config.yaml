@@ -2,9 +2,9 @@
 # Valori scalate pentru un buget de ~24h pe GPU Modal/RunPod, salvare în R2.
 
 model:
-  # Modelul AR de bază. ADR 0002: sub pragul 1B, multilingual => Qwen3-0.6B
+  # Modelul AR de bază. ADR 0002: sub pragul 1B, multilingual => Qwen2-0.5B
   # (încape pe 2–4 GPU în 24h și vede mai mulți tokeni).
-  base: "Qwen/Qwen3-0.6B"
+  base: "Qwen/Qwen2-0.5B"
   use_gqa: true
 
 diffusion:

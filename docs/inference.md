@@ -25,7 +25,7 @@ The same diffusion core powers `eval.py` (see [evaluation](evaluation.md)).
 (256 by default), appends them to the growing context, and repeats up to `max_new_tokens`
 (2048). This is the default long-output engine used for the modal inference entrypoint.
 
-## Measured speed (A10G, bf16, ~0.6B, 24 steps)
+## Measured speed (A10G, bf16, ~0.5B, 24 steps)
 
 | Mode | Tokens/sec | Note |
 |---|---|---|

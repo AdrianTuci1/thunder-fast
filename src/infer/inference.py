@@ -37,7 +37,7 @@ def main():
     device = torch.device("cuda" if args.gpu else "cpu")
 
     ckpt = torch.load(args.ckpt, map_location=device)
-    base_model = args.base_model or ckpt.get("base_model", "Qwen/Qwen3-0.6B")
+    base_model = args.base_model or ckpt.get("base_model", "Qwen/Qwen2-0.5B")
 
     model = DiffusionLM(base_model).to(device)
     model.load_state_dict(ckpt["model"])

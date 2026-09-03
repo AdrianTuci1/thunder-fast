@@ -7,7 +7,7 @@ is hardcoded, so the same pipeline scales to a different backbone / budget by ed
 
 | Key | Default | Meaning |
 |---|---|---|
-| `base` | `Qwen/Qwen3-0.6B` | The Hugging Face causal backbone id. Change this to scale the model size (e.g. a 7B); the training/inference code is unchanged. |
+| `base` | `Qwen/Qwen2-0.5B` | The Hugging Face causal backbone id. Change this to scale the model size (e.g. a 7B); the training/inference code is unchanged. |
 | `use_gqa` | `true` | Grouped-query attention on the backbone. |
 
 ## diffusion

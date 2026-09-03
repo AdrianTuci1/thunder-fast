@@ -24,7 +24,7 @@ from safetensors.torch import save_file
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-model", default="Qwen/Qwen3-0.6B")
+    ap.add_argument("--base-model", default="Qwen/Qwen2-0.5B")
     ap.add_argument("--out", default="model")
     ap.add_argument("--infer-steps", type=int, default=24)
     args = ap.parse_args()

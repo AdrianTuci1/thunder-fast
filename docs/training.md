@@ -8,7 +8,7 @@ checkpoint to Cloudflare R2 so the run is resumable.
 
 Read from `config/train_config.yaml` (see [config](config.md)):
 
-- `model.base` — the HF backbone id (e.g. `Qwen/Qwen3-0.6B`). Changing this is how you scale
+- `model.base` — the HF backbone id (e.g. `Qwen/Qwen2-0.5B`). Changing this is how you scale
   to a larger model; the loss and checkpointing code are unchanged.
 - `diffusion.seq_len` (256) — generated window length.
 - `diffusion.infer_steps` (24) — un-mask steps at inference. Training has *no* diffusion steps;

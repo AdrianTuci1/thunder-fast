@@ -1,7 +1,7 @@
 """Convert a masked-diffusion checkpoint (config.json + diffusion_model.safetensors,
 produced by convert/convert_to_diffusion.py) into the runtime's GGUF.
 
-The GGUF carries the hyperparams under `qwen3.*` and the diffusion params under `dlm.*`,
+The GGUF carries the hyperparams under `qwen2.*` and the diffusion params under `dlm.*`,
 matching runtime/src/engine/model.cpp. Weight keys map HF/DiffusionLM names to ggml names.
 
 Runs in the CI/Modal build environment (requires the `gguf` + `safetensors` packages).
@@ -22,7 +22,7 @@ def map_key(k: str) -> str:
     """Map a DiffusionLM state_dict key to a ggml tensor name.
 
     DiffusionLM wraps the base model: keys are prefixed `base_model.model...`,
-    `word_embeddings...`, `lm_head...`. We strip the wrapper to the Qwen3 names.
+    `word_embeddings...`, `lm_head...`. We strip the wrapper to the Qwen2 names.
     """
     k = k.replace("base_model.model.", "blk.", 1)  # partial; layers handled below
     # embeddings / lm_head
@@ -64,14 +64,14 @@ def main() -> None:
 
     import gguf  # requires gguf-py in the build env
 
-    writer = gguf.GGUFWriter(args.out, "qwen3")
+    writer = gguf.GGUFWriter(args.out, "qwen2")
     # hyperparams
     writer.add_name(cfg.get("base_model", "thunder-dlm-0.6b"))
-    writer.add_uint32("qwen3.context_length", 256)
-    writer.add_uint32("qwen3.n_layer", _config_or(cfg, _tensor(state, "base_model.model.layers") , 28))
+    writer.add_uint32("qwen2.context_length", 256)
+    writer.add_uint32("qwen2.n_layer", _config_or(cfg, _tensor(state, "base_model.model.layers") , 28))
     # (n_layer/n_embd derived from tensor shapes below)
-    writer.add_uint32("qwen3.rms_norm_eps", 1e-6)
-    writer.add_uint32("qwen3.rope_freq_base", 10000)
+    writer.add_uint32("qwen2.rms_norm_eps", 1e-6)
+    writer.add_uint32("qwen2.rope_freq_base", 10000)
     writer.add_uint32("dlm.mask_token_id", cfg.get("mask_token_id", 151665))
     writer.add_uint32("dlm.infer_steps", cfg.get("infer_steps", 24))
 

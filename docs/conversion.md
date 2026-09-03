@@ -14,7 +14,7 @@ model/diffusion_model.safetensors       the full adapted weights
 ```
 
 ```
-python convert/convert_to_diffusion.py --base-model Qwen/Qwen3-0.6B --out model
+python convert/convert_to_diffusion.py --base-model Qwen/Qwen2-0.5B --out model
 ```
 
 This is the training-side conversion.
@@ -22,7 +22,7 @@ This is the training-side conversion.
 ## Checkpoint / safetensors → GGUF (runtime/tools/convert_to_gguf.py)
 
 Produces the GGUF the ggml runtime loads. It reads `config.json` + `diffusion_model.safetensors`
-and writes a GGUF with the hyperparams under `qwen3.*` and the diffusion params under `dlm.*`
+and writes a GGUF with the hyperparams under `qwen2.*` and the diffusion params under `dlm.*`
 (matching `runtime/src/engine/model.h`). Weight keys map the HF/DiffusionLM names to ggml names
 (`token_embd.weight`, `blk.N.attn_q.weight`, `blk.N.ffn_gate.weight`, `output.weight`, ...).
 

@@ -1,39 +1,39 @@
-# Portarea unui LLM autoregresiv la difuzie mascată discretă
+# Porting an autoregressive LLM to discrete masked diffusion
 
-Documentul explică metoda prin care transformăm un LLM autoregresiv (AR) — în cazul nostru
-**Qwen3-0.6B** — într-un **Masked Diffusion Model (MDM)** discret, non-autoregresiv. Scopul este să
-reținem greutățile pre-antrenate și să schimbăm doar *ceea ce face modelul*: în loc să prezică tokenul
-următor, denoisează secvența pornind dintr-o stare plină de `[MASK]`.
+This document explains how we turn an autoregressive (AR) LLM — in our case **Qwen2-0.5B** — into a
+discrete, non-autoregressive **Masked Diffusion Model (MDM)**. The goal is to keep the pretrained
+weights and change only *what the model does*: instead of predicting the next token, it denoises a
+sequence starting from a fully `[MASK]` state.
 
-Implementarea trăiește în `src/train/model.py` (`DiffusionLM`), `src/train/diffusion.py`
-(`MaskedDiffusion`), `src/train/train.py` și `eval/eval.py`.
-
----
-
-## 0. Ce înseamnă "difuzie mascată discretă"
-
-- **Autoregresiv (AR):** generează token cu token; la pasul *t* vede doar prefixul `x[0..t-1]`.
-- **Mascare discretă (MDM):** pornește cu o secvență în care o parte din poziții sunt **mascate**
-  (înlocuite cu tokenul special `[MASK]`) și reconstruiește *toate* pozițiile mascate **în paralel**,
-  la fiecare pas de difuzie.
-
-Diferența practică: la AR costul crește cu lungimea secvenței; la MDM costul crește cu **numărul de
-pași** de denoising (fix, ex. 24), independent de lungimea ferestrei.
+The implementation lives in `src/train/model.py` (`DiffusionLM`), `src/train/diffusion.py`
+(`MaskedDiffusion`), `src/train/train.py` and `eval/eval.py`.
 
 ---
 
-## 1. Cele patru schimbări structurale
+## 0. What "discrete masked diffusion" means
 
-### 1.1 Atenție bidirecțională
+- **Autoregressive (AR):** generates token by token; at step *t* it sees only the prefix `x[0..t-1]`.
+- **Discrete masking (MDM):** starts from a sequence where a fraction of positions are **masked**
+  (replaced with the special `[MASK]` token) and reconstructs *all* the masked positions **in
+  parallel**, at each diffusion step.
 
-Modelul AR folosește o **mască cauzală** (poziția *i* vede doar pozițiile ≤ *i*). Pentru denoising
-avem nevoie ca fiecare poziție să vadă **întregul context** (inclusiv pozițiile din dreapta), ca să
-poată reconstrui tokeni mascați folosind vecini de ambele părți.
+The practical difference: in AR the cost grows with sequence length; in MDM the cost grows with the
+**number of denoising steps** (fixed, e.g. 24), independent of window length.
 
-**Atenție (capcană de versiune HF):** setarea `is_causal=False` pe module **nu este suficientă**.
-Metoda `_update_causal_mask` din transformers construiește intern o mască 4D **cauzală** oricând
-`attention_mask` este `None` (sau 2D), iar acea mască este pasată direct kernelului de atenție și
-**suprascrie** `is_causal`. Soluția corectă:
+---
+
+## 1. The four structural changes
+
+### 1.1 Bidirectional attention
+
+The AR model uses a **causal mask** (position *i* sees only positions ≤ *i*). For denoising we need
+every position to see the **whole context** (including positions to the right), so that it can
+reconstruct masked tokens using neighbours on both sides.
+
+**Caution (HF version trap):** setting `is_causal=False` on the modules is **not sufficient**.
+The `_update_causal_mask` method in transformers internally builds a 4-D **causal** mask whenever
+`attention_mask` is `None` (or 2-D), and that mask is passed directly to the attention kernel and
+**overrides** `is_causal`. The correct solution:
 
 ```python
 L = input_ids.shape[1]
@@ -41,18 +41,18 @@ attn_mask = torch.zeros((1, 1, L, L), dtype=torch.bool, device=input_ids.device)
 out = backbone(input_ids=input_ids, attention_mask=attn_mask, output_hidden_states=True)
 ```
 
-O mască 4D all-zero (respectiv all-`False` la bool) este folosită direct de `_update_causal_mask`,
-deci pozițiile se văd toate reciproc. Fără această mască, modelul rămâne cauzal și produce ieșiri
-degenerate (repetă tokeni de frecvență înaltă, necondiționate de prompt) la antrenare și la inferență.
+A 4-D all-zero mask (all-`False` for bool) is used directly by `_update_causal_mask`, so all positions
+attend to each other. Without this mask the model stays causal and produces degenerate outputs
+(it repeats high-frequency tokens, unconstrained by the prompt) both at training and at inference.
 
-> **Verificare obligatorie:** comportamentul `_update_causal_mask` variază între versiuni de
-> transformers și între arhitecturi. Dacă pe arhitectura aleasă masca 4D nu este folosită direct,
-> înlocuim cu `_attn_implementation="flash_attention_2"` + mască all-ones testată.
+> **Mandatory check:** the behaviour of `_update_causal_mask` varies between transformers versions and
+> between architectures. If on the chosen architecture the 4-D mask is not used directly, we replace it
+> with `_attn_implementation="flash_attention_2"` + a tested all-ones mask.
 
-### 1.2 Token discret de mascare `[MASK]`
+### 1.2 Discrete mask token `[MASK]`
 
-Adăugăm un token special `[MASK]` în vocabular (reprezintă "zgomotul" / poziția necunoscută) și
-mărim embeddings-urile:
+We add a special `[MASK]` token to the vocabulary (it represents the "noise" / unknown position) and
+grow the embeddings:
 
 ```python
 if tokenizer.mask_token is None:
@@ -60,79 +60,80 @@ if tokenizer.mask_token is None:
 model.resize_token_embeddings(len(tokenizer))
 ```
 
-La antrenare, pozițiile mascate primesc `input_ids = mask_token_id`; la inferență, pozițiile de generat
-încep ca `[MASK]` și sunt descoperite progresiv.
+At training, the masked positions get `input_ids = mask_token_id`; at inference, the positions to
+generate start as `[MASK]` and are revealed progressively.
 
-### 1.3 Re-țintirea head-ului la reconstrucția tokenilor mascați
+### 1.3 Re-targeting the head at masked-token reconstruction
 
-În loc de cross-entropy "next-token", obiectivul este **reconstrucția** tokenilor curați la pozițiile
-mascate. `forward(input_ids) -> logits [B, L, V]` produce logits la fiecare poziție; loss-ul se aplică
-**doar** pe pozițiile cu `[MASK]`.
+Instead of "next-token" cross-entropy, the objective is **reconstruction** of the clean tokens at the
+masked positions. `forward(input_ids) -> logits [B, L, V]` produces logits at every position; the loss
+is applied **only** on the `[MASK]` positions.
 
-### 1.4 Obiectiv de antrenare (CE mascată + termen de "path")
+### 1.4 Training objective (masked CE + a "path" term)
 
 ```python
-mdm_loss = CE(logits[mask], x0[mask])            # reconstrucția pozițiilor mascate
-path_loss = exp(-mdm_loss) * mdm_loss * (1/mask_ratio)  # re-ponderare pe calea de denoising
+mdm_loss = CE(logits[mask], x0[mask])            # reconstruction of masked positions
+path_loss = exp(-mdm_loss) * mdm_loss * (1/mask_ratio)  # re-weighting along the denoising path
 loss = mdm_loss + path_loss
 ```
 
-Rapoartele de mascare sunt eșantionate uniform dintr-un interval (ex. `[0.002, 0.998]`), deci modelul
-învață să gestioneze de la foarte puține la aproape toate pozițiile mascate.
+Mask ratios are sampled uniformly from an interval (e.g. `[0.002, 0.998]`), so the model learns to
+handle from very few to almost all masked positions.
 
 ---
 
-## 2. Generarea (inferență)
+## 2. Generation (inference)
 
-Deoarece modelul reconstruiește poziții mascate, generarea este un **unmask progresiv**:
+Since the model reconstructs masked positions, generation is **progressive unmasking**:
 
-1. Inițializează pozițiile de generat ca `[MASK]`.
-2. La fiecare pas: `logits = forward(x)`, apoi **shift next-token**
-   (`logits = cat([logits[:, :1], logits[:, :-1]], dim=1)`) — aliniere identică cu antrenarea.
-3. Eșantionează tokeni candidați + o **măsură de încredere** (implicit **entropia**; alternative
+1. Initialize the positions to generate as `[MASK]`.
+2. At each step: `logits = forward(x)`, then a **next-token shift**
+   (`logits = cat([logits[:, :1], logits[:, :-1]], dim=1)`) — the same alignment as training.
+3. Sample candidate tokens + a **confidence metric** (default **entropy**; alternatives
    `topk_margin`, `p2`).
-4. Descoperă cele mai "încrezătoare" poziții; cele rămase rămân mascate. Repetă pentru pașii rămași.
+4. Reveal the most "confident" positions; the rest stay masked. Repeat for the remaining steps.
 
-Algoritmi de unmask: `entropy` (implicit), `p2` (re-mascare a pozițiilor cu încredere mică),
-`origin` (transfer aleatoriu). Parametrul `alg_temp` (implicit `0.6`) îndulcește distribuția pozițiilor
-de unmask.
+Unmask algorithms: `entropy` (default), `p2` (re-masking of low-confidence positions),
+`origin` (random transfer). The `alg_temp` parameter (default `0.6`) softens the distribution of the
+unmask positions.
 
-### Ieșiri lungi — generare pe blocuri
+### Long outputs — block-wise generation
 
-O fereastră antrenează pe `seq_len` (ex. 256), dar vrem până la 2048 tokeni. Folosim **generare pe
-blocuri**: generăm un bloc de `block_len` tokeni, îl adăugăm ca prefix, apoi generăm următorul bloc.
-Contextul crește la fiecare pas. `stop_at_eos` oprește mai devreme dacă apare `EOS`.
+A window is trained on `seq_len` (e.g. 256), but we want up to 2048 tokens. We use **block-wise
+generation**: generate a block of `block_len` tokens, append it as a prefix, then generate the next
+block. The context grows at each step. `stop_at_eos` stops earlier if an `EOS` appears.
 
-> **Limitare cunoscută:** contextul agregat depășește fereastra de antrenare, deci ultimele blocuri se
-> pot degrada (repetiție). Soluție: ferestre mai lungi la antrenare sau includerea de context lung.
+> **Known limitation:** the aggregated context exceeds the training window, so the last blocks can
+> degrade (repetition). Solution: longer windows at training, or including long context.
 
 ---
 
-## 3. Unde este implementat
+## 3. Where it is implemented
 
-| Componentă | Fișier | Rol |
+| Component | File | Role |
 |---|---|---|
-| Model + adaptare | `src/train/model.py` | `make_bidirectional`, `[MASK]`, `forward`, `generate`/`generate_long` |
-| Obiectiv MDM | `src/train/diffusion.py` | `MaskedDiffusion` (CE mascată + path loss) |
-| Antrenare | `src/train/train.py` | bucla de training, optimizator, resume |
-| Date | `src/train/data.py` | `PackedDataset` |
-| Eval | `eval/eval.py` | `reconstruction_loss` + generare |
-| Inferență de referință | `infra/modal_infer_open.py` | `_discrete_generate_window` / `_discrete_generate_long` |
-| Runtime CPU SIMD | `src/infer/` | ținta finală (ADR 0003), kernel-uri ggml adaptate |
+| Model + adaptation | `src/train/model.py` | `make_bidirectional`, `[MASK]`, `forward`, `generate`/`generate_long` |
+| MDM objective | `src/train/diffusion.py` | `MaskedDiffusion` (masked CE + path loss) |
+| Training | `src/train/train.py` | training loop, optimizer, resume |
+| Data | `src/train/data.py` | `PackedDataset` |
+| Eval | `eval/eval.py` | `reconstruction_loss` + generation |
+| Reference inference | `infra/modal_infer_open.py` | `_discrete_generate_window` / `_discrete_generate_long` |
+| Runtime (ggml) | `runtime/` | the final target (ADR 0012), ggml kernels over bidirectional attention |
 
 ---
 
-## 4. Validare (smoke test)
+## 4. Validation (smoke test)
 
-Înainte de rularea lungă, validăm întregul lanț cu un `--max-steps` mic (ex. 40–80) pe cloud, în
-ordinea:
+Before the long run, we validate the whole chain with a small `--max-steps` (e.g. 40–80) on the cloud,
+in this order:
 
-1. modelul se inițializează + `forward` merge (fără crash/OOM),
-2. **loss-ul scade** (nu NaN/inf),
-3. salvare/reîncărcare checkpoint (`save_ckpt` → `.pt` + `.meta.json`),
-4. upload pe R2 + resume de la `step_X`,
-5. generare la 24 de pași (decodare → nu garbage/special-only),
-6. `reconstruction_loss` finită,
-7. încape în memoria GPU-ului (altfel reducem `batch_size_seq`).
+1. the model initialises + `forward` works (no crash/OOM),
+2. **the loss decreases** (no NaN/inf),
+3. save/reload checkpoint (`save_ckpt` → `.pt` + `.meta.json`),
+4. upload to R2 + resume from `step_X`,
+5. generation at 24 steps (decoding → not garbage/special-only),
+6. `reconstruction_loss` is finite,
+7. fits in GPU memory (otherwise reduce `batch_size_seq`).
 
-Atenția bidirecțională se verifică explicit în pasul 2/5 (fără masca 4D, modelul ar rămâne cauzal).
+Bidirectional attention is checked explicitly in steps 2/5 (without the 4-D mask the model would stay
+causal).

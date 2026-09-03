@@ -1,4 +1,4 @@
-// engine/model.cpp — Qwen3 backbone over ggml with BIDIRECTIONAL attention.
+// engine/model.cpp — Qwen2 backbone over ggml with BIDIRECTIONAL attention.
 //
 // The one real divergence from llama.cpp's Qwen2/Qwen3 builder is the attention mask:
 // we build an ALL-ONES (non-causal) mask instead of a lower-triangular causal mask, so
@@ -68,17 +68,17 @@ RuntimeModel::RuntimeModel(const std::string& model_path) : impl_(new Impl) {
         return idx < 0 ? dflt : gguf_get_val_f32(gctx, idx);
     };
 
-    impl_->cfg.n_layer       = i32("qwen3.n_layer", 28);
-    impl_->cfg.n_embd        = i32("qwen3.n_embd", 1024);
-    impl_->cfg.n_head        = i32("qwen3.n_head", 16);
-    impl_->cfg.n_head_kv     = i32("qwen3.n_head_kv", 8);
-    impl_->cfg.n_ff          = i32("qwen3.n_ff", 3072);
-    impl_->cfg.vocab_size    = i32("qwen3.vocab_size", 151936);
-    impl_->cfg.context_len   = i32("qwen3.context_length", 256);
+    impl_->cfg.n_layer       = i32("qwen2.n_layer", 28);
+    impl_->cfg.n_embd        = i32("qwen2.n_embd", 1024);
+    impl_->cfg.n_head        = i32("qwen2.n_head", 16);
+    impl_->cfg.n_head_kv     = i32("qwen2.n_head_kv", 8);
+    impl_->cfg.n_ff          = i32("qwen2.n_ff", 3072);
+    impl_->cfg.vocab_size    = i32("qwen2.vocab_size", 151936);
+    impl_->cfg.context_len   = i32("qwen2.context_length", 256);
     impl_->cfg.mask_token_id = i32("dlm.mask_token_id", 151665);
     impl_->cfg.infer_steps   = i32("dlm.infer_steps", 24);
-    impl_->cfg.rms_norm_eps  = f32("qwen3.rms_norm_eps", 1e-6f);
-    impl_->cfg.rope_freq_base= f32("qwen3.rope_freq_base", 10000.0f);
+    impl_->cfg.rms_norm_eps  = f32("qwen2.rms_norm_eps", 1e-6f);
+    impl_->cfg.rope_freq_base= f32("qwen2.rope_freq_base", 10000.0f);
 
     // TODO(build): read the weight tensors out of the gguf context (gguf_get_tensor →
     //    ggml_backend_tensor_get into host buffers) keyed by the standard names

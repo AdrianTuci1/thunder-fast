@@ -1,8 +1,8 @@
-// engine/model.h — runtime model (Qwen3 backbone over ggml) with bidirectional attention.
+// engine/model.h — runtime model (Qwen2 backbone over ggml) with bidirectional attention.
 //
 // Loads the converted diffusion weights (GGUF) and runs the denoising forward pass.
 // The custom piece vs llama.cpp is the ALL-ONES (non-causal) attention mask, which
-// turns a causal Qwen3 into a bidirectional MDM denoiser. Everything else maps to the
+// turns a causal Qwen2 into a bidirectional MDM denoiser. Everything else maps to the
 // standard Qwen2/Qwen3 ggml builder path. There is no KV-cache: the whole window is one
 // forward pass (matching training + the reference DiffusionLM.forward).
 //

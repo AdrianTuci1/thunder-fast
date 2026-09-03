@@ -1,6 +1,6 @@
 """GPU throughput / VRAM benchmark for thunder-fast on an H100.
 
-Loads the real DiffusionLM (Qwen3-0.6B) and runs forward+backward at several batch
+Loads the real DiffusionLM (Qwen2-0.5B) and runs forward+backward at several batch
 sizes, reporting per-micro-batch time, tokens/sec, GPU utilization (nvidia-smi) and peak
 VRAM. Use it to pick a better `batch_size_seq` than the current 32.
 
@@ -55,7 +55,7 @@ def bench():
     from src.train.diffusion import MaskedDiffusion
     from src.train.model import DiffusionLM
 
-    model = DiffusionLM("Qwen/Qwen3-0.6B").to("cuda")
+    model = DiffusionLM("Qwen/Qwen2-0.5B").to("cuda")
     diff = MaskedDiffusion(infer_steps=24)
     model.set_train_ctx()
     model.train()

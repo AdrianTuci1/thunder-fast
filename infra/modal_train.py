@@ -9,7 +9,7 @@ supported way in modal 1.5.1; `@app.function` no longer takes a `mounts` kwarg a
 were never uploaded). The config file is read as a raw string on the local machine and parsed
 to a `dict` inside the container (which has PyYAML + torch), so no heavy dependency is needed
 locally. The CUDA image is built from `requirements.txt`, the HF token is injected as a secret
-(needed to download Qwen3-0.6B and gated datasets like OSCAR), and checkpoints are written into
+(needed to download Qwen2-0.5B and gated datasets like OSCAR), and checkpoints are written into
 the persistent `thunder-checkpoints` Volume mounted at /vol/checkpoints (only the last N are
 kept - see config `training.keep_last`).
 """
@@ -42,7 +42,7 @@ def _ignore(p: Path) -> bool:
 
 app = modal.App("thunder-fast-train")
 
-# torch >= 2.5 is required by this transformers line (Qwen3 support), so the base image must
+# torch >= 2.5 is required by this transformers line (Qwen2 support), so the base image must
 # ship a matching torch instead of the older 2.4.0 image.
 image = (
     modal.Image.from_registry("pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime")

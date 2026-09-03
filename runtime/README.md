@@ -11,7 +11,7 @@ and **no KV-cache** — the whole window is one forward pass.
 runtime/
   src/
     diffusion/    denoise loop + mask schedule + sampler      (custom core)
-    engine/       Qwen3 backbone over ggml, bidirectional attention
+    engine/       Qwen2 backbone over ggml, bidirectional attention
     tokenizer/    byte-level BPE (vocab.json + merges.txt)
   tests/          functional test of the diffusion core (no ggml)
   tools/          convert_to_gguf.py, upload_r2.py
@@ -68,5 +68,5 @@ Endpoints: `GET /health`, `POST /v1/completions`, `POST /v1/chat/completions`.
   `engine/model.cpp`); building it requires the ggml checkout.
 - `convert_to_gguf.py` tensor-key mapping and `n_layer` guess are validated against the
   actual `DiffusionLM` state dict at build time.
-- `tokenizer.cpp` v1 does raw-byte BPE; Qwen3's GPT-2-style byte->unicode render and
+- `tokenizer.cpp` v1 does raw-byte BPE; Qwen2's GPT-2-style byte->unicode render and
   pre-tokenization regex are a follow-up.

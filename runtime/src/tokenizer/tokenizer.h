@@ -1,8 +1,8 @@
-// tokenizer/tokenizer.h — byte-level BPE (Qwen3 style), self-contained.
+// tokenizer/tokenizer.h — byte-level BPE (Qwen2 style), self-contained.
 //
-// Loads Qwen3's vocab.json + merges.txt and encodes/decodes text. This is a
+// Loads Qwen2's vocab.json + merges.txt and encodes/decodes text. This is a
 // self-contained runtime tokenizer (no PyTorch/HF). v1 note: pre-tokenization splits
-// on whitespace; the exact re2 regex Qwen3 ships is a later refinement.
+// on whitespace; the exact re2 regex Qwen2 ships is a later refinement.
 #pragma once
 
 #include <cstdint>

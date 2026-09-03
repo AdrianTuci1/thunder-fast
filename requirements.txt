@@ -1,7 +1,7 @@
 # Cloud runtime dependencies for training/eval (installed inside Modal/RunPod images).
 # Do NOT install these locally unless you want the local training env set up.
 # torch is NOT listed here: it is provided by the base image (pytorch:2.5.1-cuda12.4-cudnn9-runtime),
-# which is needed for Qwen3 support (transformers >= 4.51 requires torch >= 2.5).
+# which the transformers version below needs (transformers >= 4.51 requires torch >= 2.5).
 transformers>=4.51,<4.52
 datasets>=4.0,<5.0
 tokenizers>=0.20

@@ -11,7 +11,7 @@ denoise loop + bidirectional attention, not the kernels.
 ```
 runtime/
   src/diffusion/   denoise + schedule + sampler      (custom core, tested)
-  src/engine/      Qwen3 backbone over ggml (bidirectional attention)
+  src/engine/      Qwen2 backbone over ggml (bidirectional attention)
   src/tokenizer/   byte-level BPE
   tests/           functional test of the diffusion core (no ggml)
   tools/           convert_to_gguf.py, upload_r2.py
@@ -24,7 +24,7 @@ runtime/
 llama.cpp and LM Studio are built for autoregressive generation (causal + KV-cache). A masked
 diffusion model needs bidirectional attention and a denoise loop. There is **no plugin API** to
 add this: architectures are hardcoded (enum + switch + graph builder). A fork of llama.cpp is
-possible but, because our backbone is Qwen3 (already fully supported), the fork would be small
+possible but, because our backbone is Qwen2 (already fully supported), the fork would be small
 — yet a plugin/preset is not available. Building on ggml directly keeps us independent of
 llama.cpp's generation machinery while reusing its kernels.
 
@@ -59,7 +59,7 @@ Endpoints: `GET /health`, `POST /v1/completions`, `POST /v1/chat/completions`.
 
 ## Tokenizer
 
-Each backbone model ships **its own tokenizer** (Qwen3 the same). The converter embeds the
+Each backbone model ships **its own tokenizer** (Qwen2 the same). The converter embeds the
 backbone's tokenizer into the GGUF and the runtime reads it from there — the tokenizer is not
 shared across models. (v1 runtime tokenizer is a simplified byte-BPE; see `runtime/README.md`.)
 

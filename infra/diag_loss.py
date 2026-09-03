@@ -72,7 +72,7 @@ def diag(config_text: str, step: int, max_examples: int = 32):
     device = torch.device("cuda")
     seq_len = cfg["diffusion"]["seq_len"]
 
-    print(f"[diag] loading Qwen3-0.6B + checkpoint step_{step}.pt ...", flush=True)
+    print(f"[diag] loading Qwen2-0.5B + checkpoint step_{step}.pt ...", flush=True)
     model = DiffusionLM(cfg["model"]["base"]).to(device)
     model.eval()
     try:
