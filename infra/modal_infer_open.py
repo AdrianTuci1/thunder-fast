@@ -153,9 +153,10 @@ def infer(model_dir: str, prompt: str, max_new_tokens: int, block_len: int, step
             out = torch.cat([ids, suffix], dim=1)
         elif mode == "ar":
             # Greedy autoregressive decode under CAUSAL attention — a sanity check on the weights.
+            # Runs the full growing sequence each step (no KV-cache), so it is a lower bound on AR speed.
             cur = ids
             for _ in range(max_new_tokens):
-                tok = forward_causal(cur)[0, -1].argmax(-1).unsqueeze(0)
+                tok = forward_causal(cur)[0, -1].argmax(-1).view(1, 1)
                 cur = torch.cat([cur, tok], dim=1)
             out = cur
         elif mode == "native":

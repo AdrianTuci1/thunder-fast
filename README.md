@@ -27,6 +27,13 @@ TF_PROMPT="Write a quick sort algorithm in python." modal run infra/modal_infer_
 
 `TF_MODE=single` uses one large window instead of the default block-wise mode. Training is
 `modal run infra/modal_train.py -- --config config/train_config.yaml`, and evaluation is
-`python eval/eval.py --ckpt <path>`. The reference PyTorch engine reaches roughly 215 tok/s on an A10G
-at 24 steps. The technical details of the adaptation are in
+`python eval/eval.py --ckpt <path>`. The technical details of the adaptation are in
 [`docs/porting-to-diffusion.md`](docs/porting-to-diffusion.md).
+
+## Speed
+
+On an A10G (bf16, same 0.5B checkpoint) the reference PyTorch engine generates a 256-token window in
+about 1.5 s at 24 steps, i.e. roughly **180 tok/s**; the 512-token block-wise mode runs at about
+**215 tok/s**. For comparison, the same weights decoded autoregressively (greedy, causal attention)
+reach about **43 tok/s** — but that harness has no KV-cache and recomputes the whole sequence at each
+step, so a production AR decoder with KV-cache is substantially faster per stream.
