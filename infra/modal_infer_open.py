@@ -33,7 +33,7 @@ import modal
 REPO = Path(__file__).resolve().parents[1]
 CHECKPOINT_DIR = "/vol/checkpoints"
 REPO_REMOTE = "/repo"
-MODEL_DIR = f"{CHECKPOINT_DIR}/ref-mdm-0.5B"
+MODEL_DIR = f"{CHECKPOINT_DIR}/thunder-dlm-0.6b"
 
 
 def _ignore(p: Path) -> bool:

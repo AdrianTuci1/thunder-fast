@@ -4,7 +4,7 @@ A non-autoregressive **discrete masked diffusion** model adapted from **Qwen3-0.
 whole 256-token window in parallel over 24 diffusion steps, using bidirectional attention and a
 `[MASK]` token. Long outputs (up to 2048 tokens) are chained block-wise in 256-token windows.
 
-The model is published at **staticlabs/thunder-dlm-0.6b** and runs on Modal/RunPod images, so there is
+The model is published at **staticlabs/dlm-code0.6b-exp** and runs on Modal/RunPod images, so there is
 nothing to install locally.
 
 Complete documentation, including architecture, training, the ggml runtime, and the
@@ -24,7 +24,7 @@ because every position attends to every other it can do infilling, not just left
 ## How to use it
 
 ```
-TF_MODEL=staticlabs/thunder-dlm-0.6b modal run infra/modal_download_open.py
+TF_MODEL=staticlabs/dlm-code0.6b-exp modal run infra/modal_download_open.py
 TF_PROMPT="Write a quick sort algorithm in python." modal run infra/modal_infer_open.py
 ```
 

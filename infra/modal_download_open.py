@@ -5,7 +5,7 @@ Pulls the full repo (self-contained MDM `modeling_qwen2.py`, tokenizer with the 
 from the volume, without re-downloading from the Hub.
 
 Usage (from the repo root):
-    TF_MODEL=staticlabs/thunder-dlm-0.6b modal run infra/modal_download_open.py
+    TF_MODEL=staticlabs/dlm-code0.6b-exp modal run infra/modal_download_open.py
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import modal
 REPO = Path(__file__).resolve().parents[1]
 CHECKPOINT_DIR = "/vol/checkpoints"
 REPO_REMOTE = "/repo"
-DEST = f"{CHECKPOINT_DIR}/ref-mdm-0.5B"
+DEST = f"{CHECKPOINT_DIR}/thunder-dlm-0.6b"
 
 
 def _ignore(p: Path) -> bool:
